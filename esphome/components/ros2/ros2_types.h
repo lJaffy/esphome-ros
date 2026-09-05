@@ -5,62 +5,71 @@
 
 #include "ros2_middleware.h"
 
-namespace esphome {
-namespace ros2 {
+namespace esphome
+{
+  namespace ros2
+  {
 
-constexpr size_t ROS2_MAX_JOINTS = 16;
-constexpr size_t ROS2_MAX_TRAJ_POINTS = 2;
-constexpr size_t ROS2_NAME_LEN = 32;
-constexpr size_t ROS2_STRING_LEN = 256;
-constexpr size_t ROS2_FRAME_ID_LEN = 64;
+    constexpr size_t ROS2_MAX_JOINTS = 16;
+    constexpr size_t ROS2_MAX_TRAJ_POINTS = 2;
+    constexpr size_t ROS2_NAME_LEN = 32;
+    constexpr size_t ROS2_STRING_LEN = 256;
+    constexpr size_t ROS2_FRAME_ID_LEN = 64;
 
-struct BoolMsg {
-  bool data{false};
-};
-struct Float32Msg {
-  float data{0.0f};
-};
-struct Int32Msg {
-  int32_t data{0};
-};
-struct StringMsg {
-  char data[ROS2_STRING_LEN]{0};
-};
+    struct BoolMsg
+    {
+      bool data{false};
+    };
+    struct Float32Msg
+    {
+      float data{0.0f};
+    };
+    struct Int32Msg
+    {
+      int32_t data{0};
+    };
+    struct StringMsg
+    {
+      char data[ROS2_STRING_LEN]{0};
+    };
 
-struct HeaderMsg {
-  uint32_t seq{0};
-  float stamp{0.0f};
-  char frame_id[ROS2_FRAME_ID_LEN]{0};
-};
+    struct HeaderMsg
+    {
+      float stamp{0.0f};
+      char frame_id[ROS2_FRAME_ID_LEN]{0};
+    };
 
-struct JointStateMsg {
-  HeaderMsg header;
-  uint8_t num_joints{0};
-  char names[ROS2_MAX_JOINTS][ROS2_NAME_LEN]{0};
-  float position[ROS2_MAX_JOINTS]{0.0f};
-  float velocity[ROS2_MAX_JOINTS]{0.0f};
-  float effort[ROS2_MAX_JOINTS]{0.0f};
-};
+    struct JointStateMsg
+    {
+      HeaderMsg header;
+      uint8_t num_joints{0};
+      char name[ROS2_MAX_JOINTS][ROS2_NAME_LEN]{0};
+      float position[ROS2_MAX_JOINTS]{0.0f};
+      float velocity[ROS2_MAX_JOINTS]{0.0f};
+      float effort[ROS2_MAX_JOINTS]{0.0f};
+    };
 
-struct JointTrajectoryPointMsg {
-  float positions[ROS2_MAX_JOINTS]{0.0f};
-  float velocities[ROS2_MAX_JOINTS]{0.0f};
-  float accelerations[ROS2_MAX_JOINTS]{0.0f};
-  float effort[ROS2_MAX_JOINTS]{0.0f};
-  uint32_t time_sec{0};
-  uint32_t time_nsec{0};
-};
+    struct JointTrajectoryPointMsg
+    {
+      float positions[ROS2_MAX_JOINTS]{0.0f};
+      float velocities[ROS2_MAX_JOINTS]{0.0f};
+      float accelerations[ROS2_MAX_JOINTS]{0.0f};
+      float effort[ROS2_MAX_JOINTS]{0.0f};
+      uint32_t time_sec{0};
+      uint32_t time_nsec{0};
+    };
 
-struct JointTrajectoryMsg {
-  HeaderMsg header;
-  uint8_t num_joints{0};
-  char joint_names[ROS2_MAX_JOINTS][ROS2_NAME_LEN]{0};
-  uint8_t num_points{0};
-  JointTrajectoryPointMsg points[ROS2_MAX_TRAJ_POINTS]{};
-};
+    struct JointTrajectoryMsg
+    {
+      HeaderMsg header;
+      uint8_t num_joints{0};
+      char joint_names[ROS2_MAX_JOINTS][ROS2_NAME_LEN]{0};
+      uint8_t num_points{0};
+      JointTrajectoryPointMsg points[ROS2_MAX_TRAJ_POINTS]{};
+    };
 
-const TypeDef *find_type(const char *name);
-bool is_multi_joint_type(const TypeDef *type);
+    const TypeDef *find_type(const char *name);
+    bool is_multi_joint_type(const TypeDef *type);
 
-}  // namespace ros2
-}  // namespace esphome
+  } // namespace ros2
+} // namespace esphome
