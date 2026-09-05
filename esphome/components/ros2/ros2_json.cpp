@@ -104,7 +104,7 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
       for (JsonVariantConst v : names) {
         if (i >= n)
           break;
-        copy_name(msg->names[i], v.as<const char *>());
+        copy_name(msg->name[i], v.as<const char *>());
         i++;
       }
       i = 0;
@@ -121,6 +121,15 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
           if (i >= n)
             break;
           msg->velocity[i++] = v.as<float>();
+        }
+      }
+      JsonArrayConst eff = root["effort"].as<JsonArrayConst>();
+      if (!eff.isNull()) {
+        i = 0;
+        for (JsonVariantConst v : eff) {
+          if (i >= n)
+            break;
+          msg->effort[i++] = v.as<float>();
         }
       }
       ok = true;
@@ -193,7 +202,7 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
       JsonArray names = root["name"].to<JsonArray>();
       JsonArray pos = root["position"].to<JsonArray>();
       for (uint8_t i = 0; i < msg->num_joints; i++) {
-        names.add(msg->names[i]);
+        names.add(msg->name[i]);
         pos.add(msg->position[i]);
       }
     });

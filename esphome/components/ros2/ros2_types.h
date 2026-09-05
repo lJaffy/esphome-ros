@@ -33,9 +33,12 @@ namespace esphome
       char data[ROS2_STRING_LEN]{0};
     };
 
+    // MCU projection of std_msgs/Header (see third_party/common_interfaces).
+    // ROS 2 Header has no seq; stamp is builtin_interfaces/Time as int sec + nsec.
     struct HeaderMsg
     {
-      float stamp{0.0f};
+      int32_t stamp_sec{0};
+      uint32_t stamp_nsec{0};
       char frame_id[ROS2_FRAME_ID_LEN]{0};
     };
 

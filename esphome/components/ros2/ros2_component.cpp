@@ -135,7 +135,7 @@ namespace esphome
         n = msg->num_joints;
         positions = msg->position;
         for (uint8_t i = 0; i < n && i < ROS2_MAX_JOINTS; i++)
-          names[i] = msg->names[i];
+          names[i] = msg->name[i];
       }
       else if (strcmp(sub.type->name, "trajectory_msgs/JointTrajectory") == 0)
       {
@@ -511,7 +511,7 @@ namespace esphome
         msg.num_joints = n;
         for (uint8_t i = 0; i < n; i++)
         {
-          strncpy(msg.names[i], pub.joints[i].joint_name, ROS2_NAME_LEN - 1);
+          strncpy(msg.name[i], pub.joints[i].joint_name, ROS2_NAME_LEN - 1);
           float level = pub.joints[i].servo != nullptr ? this->recalled_level_(pub.joints[i].servo) : 0.0f;
           msg.position[i] = level_to_rad_(level, pub.joints[i].min_rad, pub.joints[i].max_rad);
         }
