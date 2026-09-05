@@ -1,0 +1,37 @@
+{
+  "name": "ROS 2 ESPHome Bridge",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "postCreateCommand": "pip install -r requirements_dev.txt",
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+  "runArgs": [
+    "--privileged"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "redhat.vscode-yaml",
+        "ms-vscode.cpptools",
+        "editorconfig.editorconfig"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "files.trimTrailingWhitespace": true,
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "yaml.customTags": [
+          "!secret scalar",
+          "!lambda scalar",
+          "!extend scalar",
+          "!remove scalar",
+          "!include_dir_named scalar",
+          "!include_dir_list scalar",
+          "!include_dir_merge_list scalar",
+          "!include_dir_merge_named scalar"
+        ]
+      }
+    }
+  }
+}
