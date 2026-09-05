@@ -11,33 +11,11 @@ from esphome.const import CONF_ID, CONF_INTERVAL, CONF_TOPIC, CONF_TYPE
 from esphome.types import ConfigType
 
 
-def _uses_servo(config) -> bool:
-    if not isinstance(config, dict):
-        return False
-    for sub in config.get(CONF_SUBSCRIPTIONS, []) or []:
-        if not isinstance(sub, dict):
-            continue
-        if CONF_TARGETS in sub:
-            return True
-        target = sub.get(CONF_TARGET, {}) or {}
-        if isinstance(target, dict) and target.get("servo") is not None:
-            return True
-    for pub in config.get(CONF_PUBLICATIONS, []) or []:
-        if not isinstance(pub, dict):
-            continue
-        if CONF_SOURCES in pub:
-            return True
-    return False
-
-
 def _auto_load(config=None):
-    loads = ["json", "binary_sensor", "sensor", "switch"]
-    try:
-        if _uses_servo(config) and "servo" not in loads:
-            loads.append("servo")
-    except Exception:
-        pass
-    return loads
+    # Servo lib must always be present: servo code paths are compiled
+    # unconditionally so JointState dispatch links even for switch-only
+    # configs. Configs without servos pay a small flash cost.
+    return ["json", "binary_sensor", "sensor", "switch", "servo"]
 
 
 AUTO_LOAD = _auto_load

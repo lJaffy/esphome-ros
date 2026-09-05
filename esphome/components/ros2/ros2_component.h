@@ -5,6 +5,11 @@
 #include <string>
 
 #include "esphome/core/component.h"
+#ifdef __has_include
+#if __has_include("esphome/core/defines.h")
+#include "esphome/core/defines.h"
+#endif
+#endif
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/sensor/sensor.h"

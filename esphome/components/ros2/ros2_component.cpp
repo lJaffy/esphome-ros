@@ -111,7 +111,6 @@ namespace esphome
 
     void Ros2Component::dispatch_scalar_servo_(const Subscription &sub, const void *sample)
     {
-#ifdef USE_SERVO
       if (sub.servo == nullptr || sub.type == nullptr)
         return;
       if (strcmp(sub.type->name, "std_msgs/Float32") != 0)
@@ -120,16 +119,10 @@ namespace esphome
       float level = rad_to_level_(rad, sub.min_rad, sub.max_rad);
       sub.servo->write(level);
       this->remember_level_(sub.servo, level);
-#else
-      (void)sub;
-      (void)sample;
-      ESP_LOGE(TAG, "servo support not compiled in; add servo: to config or AUTO_LOAD");
-#endif
     }
 
     void Ros2Component::dispatch_joints_(const Subscription &sub, const void *sample)
     {
-#ifdef USE_SERVO
       if (sub.type == nullptr)
         return;
       const char *names[ROS2_MAX_JOINTS]{nullptr};
@@ -177,11 +170,6 @@ namespace esphome
           }
         }
       }
-#else
-      (void)sub;
-      (void)sample;
-      ESP_LOGE(TAG, "servo support not compiled in; add servo: to config or AUTO_LOAD");
-#endif
     }
 
     float Ros2Component::rad_to_level_(float rad, float min_rad, float max_rad)
@@ -228,15 +216,6 @@ namespace esphome
     void Ros2Component::add_servo_subscription(const char *topic, const char *type, servo::Servo *servo, float min_rad,
                                                float max_rad)
     {
-#ifndef USE_SERVO
-      (void)topic;
-      (void)type;
-      (void)servo;
-      (void)min_rad;
-      (void)max_rad;
-      ESP_LOGE(TAG, "servo support not compiled in; add servo: to config or AUTO_LOAD");
-      return;
-#else
       if (this->num_subs_ >= ROS2_MAX_SUBSCRIPTIONS)
       {
         ESP_LOGE(TAG, "Too many subscriptions (max %u)", (unsigned)ROS2_MAX_SUBSCRIPTIONS);
@@ -256,22 +235,11 @@ namespace esphome
       sub.min_rad = min_rad;
       sub.max_rad = max_rad;
       this->subs_[this->num_subs_++] = sub;
-#endif
     }
 
     void Ros2Component::add_joint_subscription(const char *topic, const char *type, servo::Servo *servo,
                                                const char *joint_name, float min_rad, float max_rad)
     {
-#ifndef USE_SERVO
-      (void)topic;
-      (void)type;
-      (void)servo;
-      (void)joint_name;
-      (void)min_rad;
-      (void)max_rad;
-      ESP_LOGE(TAG, "servo support not compiled in; add servo: to config or AUTO_LOAD");
-      return;
-#else
       const TypeDef *def = find_type(type);
       if (def == nullptr)
       {
@@ -318,20 +286,11 @@ namespace esphome
       sub.joints[0] = t;
       sub.num_joints = 1;
       this->subs_[this->num_subs_++] = sub;
-#endif
     }
 
     void Ros2Component::add_joint_state_source(servo::Servo *servo, const char *joint_name,
                                                float min_rad, float max_rad)
     {
-#ifndef USE_SERVO
-      (void)servo;
-      (void)joint_name;
-      (void)min_rad;
-      (void)max_rad;
-      ESP_LOGE(TAG, "servo support not compiled in; add servo: to config or AUTO_LOAD");
-      return;
-#else
       if (this->num_pubs_ == 0)
         return;
       Publication &pub = this->pubs_[this->num_pubs_ - 1];
@@ -345,7 +304,6 @@ namespace esphome
       s.min_rad = min_rad;
       s.max_rad = max_rad;
       pub.joints[pub.num_joints++] = s;
-#endif
     }
 
     void Ros2Component::add_switch_subscription(const char *topic, const char *type, switch_::Switch *sw)
@@ -547,7 +505,6 @@ namespace esphome
       }
       else if (strcmp(pub.type->name, "sensor_msgs/JointState") == 0)
       {
-#ifdef USE_SERVO
         JointStateMsg msg;
         memset(&msg, 0, sizeof(msg));
         uint8_t n = pub.num_joints > ROS2_MAX_JOINTS ? ROS2_MAX_JOINTS : pub.num_joints;
@@ -559,9 +516,6 @@ namespace esphome
           msg.position[i] = level_to_rad_(level, pub.joints[i].min_rad, pub.joints[i].max_rad);
         }
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
-#else
-        (void)pub;
-#endif
       }
     }
 
