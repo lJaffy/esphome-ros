@@ -1,0 +1,74 @@
+# Phase 1b demo: gamepad / ColorRGBA topics driving an RGB lamp, no lambdas.
+# - /led/color (std_msgs/ColorRGBA): r,g,b in 0..1 map straight to the lamp;
+#   a carries brightness.
+# - /joy (sensor_msgs/Joy): axes[0..2] in -1..1 map to R,G,B; buttons[0]==0
+#   turns the lamp off.
+# - /led/color_echo (std_msgs/ColorRGBA): publishes the lamp's current
+#   colour back for ROS-side verification.
+# Adjust the GPIO pins and MQTT broker to your board/network.
+esphome:
+  name: joy-light-demo
+  friendly_name: Joy Light Demo
+
+esp32:
+  board: esp32-s3-devkitc-1
+
+logger:
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+mqtt:
+  broker: 192.168.1.10
+  topic_prefix: "digitaltwin/joy-light"
+
+ros2_mqtt:
+  default_qos: 0
+
+output:
+  - platform: gpio
+    id: led_r
+    pin: GPIO4
+  - platform: gpio
+    id: led_g
+    pin: GPIO5
+  - platform: gpio
+    id: led_b
+    pin: GPIO6
+
+light:
+  - platform: rgb
+    id: lamp
+    name: Demo Lamp
+    red: led_r
+    green: led_g
+    blue: led_b
+
+ros2:
+  middleware: mqtt
+  subscriptions:
+    - topic: /led/color
+      type: std_msgs/ColorRGBA
+      target:
+        light:
+          id: lamp
+          field: rgb
+    - topic: /joy
+      type: sensor_msgs/Joy
+      target:
+        light:
+          id: lamp
+          field: rgb
+  publications:
+    - topic: /led/color_echo
+      type: std_msgs/ColorRGBA
+      source:
+        light:
+          id: lamp
+      interval: 1s

@@ -1,0 +1,157 @@
+# Stewart platform over DDS-XRCE instead of MQTT (cf. stewart_jointstate.yaml).
+# Same six servos, same +-pi/2 range, no lambda. Requires an XRCE-DDS Agent
+# at agent_address:agent_port with ROS_DOMAIN_ID matching domain_id, e.g.:
+#   MicroXRCEAgent udp4 -p 8888
+# Verify with: ros2 topic echo /joint_states
+esphome:
+  name: platform-dds
+  friendly_name: platform DDS
+
+esp32:
+  board: esp32-s3-devkitc-1
+
+logger:
+
+api:
+  encryption:
+    key: "hM2E3Dme53HdakiMlteCiwkPQhDVezCOec1El3HNK80="
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+xrce_dds:
+  agent_address: 192.168.1.10
+  agent_port: 8888
+  transport:
+    type: udp
+  domain_id: 0
+  client_name: stewart
+
+ros2:
+  middleware: xrce_dds
+  subscriptions:
+    - topic: /joint_states
+      type: sensor_msgs/JointState
+      targets:
+        - servo:
+            {
+              id: servo_1,
+              joint_name: "joint_1",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_2,
+              joint_name: "joint_2",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_3,
+              joint_name: "joint_3",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_4,
+              joint_name: "joint_4",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_5,
+              joint_name: "joint_5",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_6,
+              joint_name: "joint_6",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+  publications:
+    - topic: /joint_states_echo
+      type: sensor_msgs/JointState
+      sources:
+        - servo:
+            {
+              id: servo_1,
+              joint_name: "joint_1",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+        - servo:
+            {
+              id: servo_2,
+              joint_name: "joint_2",
+              min_rad: -1.5708,
+              max_rad: 1.5708,
+            }
+      interval: 100ms
+
+i2c:
+  sda: GPIO8
+  scl: GPIO7
+  scan: true
+
+pca9685:
+  - id: pca9685_hub1
+    frequency: 50
+
+output:
+  - platform: pca9685
+    id: pwm_1
+    channel: 0
+  - platform: pca9685
+    id: pwm_2
+    channel: 1
+  - platform: pca9685
+    id: pwm_3
+    channel: 2
+  - platform: pca9685
+    id: pwm_4
+    channel: 3
+  - platform: pca9685
+    id: pwm_5
+    channel: 4
+  - platform: pca9685
+    id: pwm_6
+    channel: 5
+
+servo:
+  - id: servo_1
+    output: pwm_1
+    transition_length: 1s
+    auto_detach_time: 0.1s
+  - id: servo_2
+    output: pwm_2
+    auto_detach_time: 0.1s
+    transition_length: 1s
+  - id: servo_3
+    output: pwm_3
+    auto_detach_time: 0.1s
+    transition_length: 1s
+  - id: servo_4
+    output: pwm_4
+    auto_detach_time: 0.1s
+    transition_length: 1s
+  - id: servo_5
+    output: pwm_5
+    auto_detach_time: 0.1s
+    transition_length: 1s
+  - id: servo_6
+    output: pwm_6
+    auto_detach_time: 0.1s
+    transition_length: 1s

@@ -1,0 +1,60 @@
+# CompressedImage snapshot publisher for the Xiao ESP32S3 Sense (OV2640).
+# Push path: esp32_camera captures per idle_framerate, Ros2Component listens
+# via camera::CameraListener and publishes sensor_msgs/CompressedImage as
+# base64-in-JSON, throttled by interval. QoS 0, never retained.
+# Start at UXGA; drop to XGA/SVGA if free heap degrades at 1 fps.
+esphome:
+  name: xiao-sense-cam
+  friendly_name: Xiao Sense Cam
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+mqtt:
+  broker: 192.168.1.10
+  topic_prefix: "digitaltwin/xiao-sense"
+
+ros2_mqtt:
+  default_qos: 0
+
+esp32_camera:
+  id: sense_camera
+  name: Sense Camera
+  external_clock:
+    pin: GPIO10
+    frequency: 20MHz
+  i2c_pins:
+    sda: GPIO40
+    scl: GPIO39
+  data_pins: [GPIO15, GPIO17, GPIO18, GPIO16, GPIO14, GPIO12, GPIO11, GPIO48]
+  vsync_pin: GPIO38
+  href_pin: GPIO47
+  pixel_clock_pin: GPIO13
+  resolution: 1600x1200
+  jpeg_quality: 14
+  max_framerate: 1 fps
+  idle_framerate: 1 fps
+
+ros2:
+  middleware: mqtt
+  publications:
+    - topic: /camera/image/compressed
+      type: sensor_msgs/CompressedImage
+      source:
+        camera:
+          id: sense_camera
+      interval: 1s
