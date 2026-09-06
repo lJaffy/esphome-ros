@@ -4,6 +4,7 @@ import re
 import esphome.codegen as cg
 from esphome.components import binary_sensor as bs_comp
 from esphome.components.binary_sensor import BinarySensor
+from esphome.components.esp32_camera import ESP32Camera
 from esphome.components.light import LightState
 from esphome.components.sensor import Sensor
 from esphome.components.servo import Servo
@@ -49,9 +50,6 @@ AUTO_LOAD = _auto_load
 
 ros2_ns = cg.esphome_ns.namespace("ros2")
 Ros2Component = ros2_ns.class_("Ros2Component", cg.Component)
-
-camera_ns = cg.esphome_ns.namespace("camera")
-Camera = camera_ns.class_("Camera", cg.Component)
 
 CONF_MIDDLEWARE = "middleware"
 CONF_DEFAULT_PUBLISH_INTERVAL = "default_publish_interval"
@@ -255,9 +253,15 @@ def _single_target_schema():
 
 
 def _camera_source_schema() -> cv.Schema:
+    # NOTE: esp32_camera::ESP32Camera does NOT declare camera::Camera as a
+    # Python codegen parent (it lists PollingComponent + EntityBase), so
+    # cv.use_id(camera::Camera) always rejects esp32_camera IDs with
+    # "doesn't inherit from camera::Camera". Validate against the concrete
+    # ESP32Camera class instead; the C++ upcast to camera::Camera* is safe
+    # (ESP32Camera final : public camera::Camera in esp32_camera.h).
     return cv.Schema(
         {
-            cv.Required(CONF_ID): cv.use_id(Camera),
+            cv.Required(CONF_ID): cv.use_id(ESP32Camera),
         }
     )
 
