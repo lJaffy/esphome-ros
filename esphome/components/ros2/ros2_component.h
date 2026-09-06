@@ -12,20 +12,74 @@
 #endif
 #endif
 
+// All entity dependencies are optional: AUTO_LOAD pulls only the libs the
+// YAML actually uses, so any of these headers may be absent from the build.
+// Guard every include with its USE_* macro and forward-declare the classes
+// below (pointer members/parameters never need the complete type).
+#ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#endif
+#ifdef USE_CAMERA
 #include "esphome/components/camera/camera.h"
+#endif
+#ifdef USE_LIGHT
 #include "esphome/components/light/light_state.h"
+#endif
+#ifdef USE_SENSOR
 #include "esphome/components/sensor/sensor.h"
+#endif
+#ifdef USE_SERVO
 #include "esphome/components/servo/servo.h"
+#endif
+#ifdef USE_SWITCH
 #include "esphome/components/switch/switch.h"
+#endif
+#ifdef USE_TIME
 #include "esphome/components/time/real_time_clock.h"
+#endif
 
 #include "ros2_middleware.h"
 #include "ros2_types.h"
+namespace esphome
+{
+// Forward declarations matching the guarded includes above. Only pointers
+// to these appear in this header, so incomplete types are enough; the .cpp
+// includes the full header under the same USE_* guard wherever it calls
+// methods on them.
+namespace binary_sensor
+{
+class BinarySensor;
+}  // namespace binary_sensor
+namespace camera
+{
+class Camera;
+}  // namespace camera
+namespace light
+{
+class LightState;
+}  // namespace light
+namespace sensor
+{
+class Sensor;
+}  // namespace sensor
+namespace servo
+{
+class Servo;
+}  // namespace servo
+namespace switch_
+{
+class Switch;
+}  // namespace switch_
+namespace time
+{
+class RealTimeClock;
+}  // namespace time
+}  // namespace esphome
 
-namespace esphome {
-namespace ros2 {
-
+namespace esphome
+{
+namespace ros2
+{
 // Static-only bounds: each Subscription carries a full joint table, so keep
 // these small (ESP32 SRAM). Raise only with a measured RAM budget.
 constexpr size_t ROS2_MAX_SUBSCRIPTIONS = 16;
@@ -143,7 +197,11 @@ struct Publication {
   bool imu_has_orientation{false};
 };
 
+#ifdef USE_CAMERA
 class Ros2Component : public Component, public camera::CameraListener {
+#else
+class Ros2Component : public Component {
+#endif
  public:
   void set_middleware_name(const std::string &name) { this->middleware_name_ = name; }
   void set_default_publish_interval(uint32_t ms) { this->default_interval_ms_ = ms; }
@@ -183,7 +241,9 @@ class Ros2Component : public Component, public camera::CameraListener {
                            sensor::Sensor *ow);
   void add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
                         float tx, float ty, float tz, float qx, float qy, float qz, float qw);
+#ifdef USE_CAMERA
   void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
+#endif
   // Post-hoc per-topic configuration from codegen (keeps add_* signatures
   // stable across single- and multi-entity topics).
   void set_subscription_qos(const char *topic, const char *qos);

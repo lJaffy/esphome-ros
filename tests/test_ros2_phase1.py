@@ -494,3 +494,23 @@ def test_entity_guards_cover_all_dispatch(ros2):
         for needle in needles:
             assert needle in guarded, needle
             assert define in guarded[needle], f"{needle} outside #{define}"
+
+
+def test_optional_entity_includes_guarded(ros2):
+    import re
+    header = (COMP_INIT.parent / "ros2_component.h").read_text()
+    stack = []
+    for line in header.splitlines():
+        stripped = line.strip()
+        m = re.match(r"#(ifdef|ifndef|if|else|elif|endif)\b\s*(\w+)?", stripped)
+        if m:
+            tag, name = m.group(1), m.group(2)
+            if tag in ("ifdef", "ifndef", "if"):
+                stack.append(name)
+            elif tag == "endif" and stack:
+                stack.pop()
+            continue
+        m = re.match(r'#include "esphome/components/(\w+)/', stripped)
+        if m:
+            assert stack and (stack[-1] or "").startswith("USE_"), \
+                f"{m.group(1)} include outside USE_* guard"
