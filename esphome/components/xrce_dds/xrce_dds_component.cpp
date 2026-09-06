@@ -158,6 +158,8 @@ void XrceDdsComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Readers: %u/%u, writers: %u/%u", (unsigned) this->num_readers_,
                 (unsigned) this->max_datareaders_, (unsigned) this->num_writers_,
                 (unsigned) this->max_datawriters_);
+  ESP_LOGCONFIG(TAG, "  Topics: %u/%u", (unsigned) this->count_topics_(),
+                (unsigned) this->max_topics_);
 }
 
 void XrceDdsComponent::drop_link_() {
@@ -260,6 +262,37 @@ XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_by_id_(uxrObjectId 
     if (this->readers_[i].created && this->readers_[i].reader_id.id == id.id)
       return &this->readers_[i];
   return nullptr;
+}
+
+size_t XrceDdsComponent::count_topics_() {
+  const std::string *seen[XRCE_MAX_READERS + XRCE_MAX_WRITERS];
+  size_t n = 0;
+  auto add = [&](const std::string &topic) {
+    for (size_t i = 0; i < n; i++)
+      if (*seen[i] == topic)
+        return;
+    seen[n++] = &topic;
+  };
+  for (size_t i = 0; i < this->num_readers_; i++)
+    add(this->readers_[i].topic);
+  for (size_t i = 0; i < this->num_writers_; i++)
+    add(this->writers_[i].topic);
+  return n;
+}
+
+bool XrceDdsComponent::topic_allowed_(const std::string &topic) {
+  for (size_t i = 0; i < this->num_readers_; i++)
+    if (this->readers_[i].topic == topic)
+      return true;
+  for (size_t i = 0; i < this->num_writers_; i++)
+    if (this->writers_[i].topic == topic)
+      return true;
+  size_t budget = this->max_topics_ < XRCE_MAX_TOPICS ? this->max_topics_ : XRCE_MAX_TOPICS;
+  if (this->count_topics_() >= budget) {
+    ESP_LOGE(TAG, "Too many topics (max %u)", (unsigned) budget);
+    return false;
+  }
+  return true;
 }
 
 bool XrceDdsComponent::create_pending_entities_() {
@@ -438,6 +471,9 @@ bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *
     e->type = type;
     return true;
   }
+  if (!this->topic_allowed_(topic)) {
+    return false;
+  }
   if (this->num_readers_ >= XRCE_MAX_READERS || this->num_readers_ >= this->max_datareaders_) {
     ESP_LOGE(TAG, "Too many readers for %s", topic.c_str());
     return false;
@@ -465,6 +501,9 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
     return false;
   WriterEntry *w = this->find_writer_(topic);
   if (w == nullptr) {
+    if (!this->topic_allowed_(topic)) {
+      return false;
+    }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
       ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
       return false;
@@ -507,6 +546,9 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     return false;
   WriterEntry *w = this->find_writer_(topic);
   if (w == nullptr) {
+    if (!this->topic_allowed_(topic)) {
+      return false;
+    }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
       ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
       return false;

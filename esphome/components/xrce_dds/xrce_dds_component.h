@@ -102,6 +102,10 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   ReaderEntry *find_reader_(const std::string &topic);
   WriterEntry *find_writer_(const std::string &topic);
   ReaderEntry *find_reader_by_id_(uxrObjectId id);
+  // Distinct DDS topics across readers+writers. Each new topic mints a
+  // topic entity on the agent, bounded by max_topics_.
+  size_t count_topics_();
+  bool topic_allowed_(const std::string &topic);
   void on_data_(uxrObjectId reader_id, ucdrBuffer *ub, uint16_t length);
   static void topic_trampoline_(uxrSession *session, uxrObjectId object_id, uint16_t request_id,
                                 uxrStreamId stream_id, ucdrBuffer *ub, uint16_t length, void *args);

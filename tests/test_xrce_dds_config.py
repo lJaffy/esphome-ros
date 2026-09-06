@@ -65,3 +65,31 @@ def test_config_defaults(xrce):
 def test_dependencies_include_network(xrce):
     assert "ros2" in xrce.DEPENDENCIES
     assert "network" in xrce.DEPENDENCIES
+
+
+def _config(xrce, **kw):
+    base = {
+        "agent_address": "192.168.1.10",
+        "transport": {"type": "udp"},
+    }
+    base.update(kw)
+    return xrce.CONFIG_SCHEMA(base)
+
+
+def test_max_topics_clamped_to_compile_cap(xrce):
+    with pytest.raises(Exception):
+        _config(xrce, max_topics=17)
+
+
+def test_max_endpoints_clamped_to_compile_cap(xrce):
+    with pytest.raises(Exception):
+        _config(xrce, max_datawriters=9)
+    with pytest.raises(Exception):
+        _config(xrce, max_datareaders=9)
+
+
+def test_max_bounds_accepted(xrce):
+    cfg = _config(xrce, max_topics=16, max_datawriters=8, max_datareaders=8)
+    assert cfg["max_topics"] == 16
+    assert cfg["max_datawriters"] == 8
+    assert cfg["max_datareaders"] == 8

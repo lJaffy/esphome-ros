@@ -153,6 +153,24 @@ def test_joy_pub_rejected_subscribe_only(ros2):
         _pub(ros2, type="sensor_msgs/Joy", source={"light": {"id": "lamp"}})
 
 
+def test_unmapped_sub_types_rejected(ros2):
+    for t in ("std_msgs/Int32", "std_msgs/String"):
+        with pytest.raises(Exception):
+            ros2.SUBSCRIPTION_SCHEMA(
+                {"topic": "/x", "type": t,
+                 "target": {"switch": {"id": "s"}}}
+            )
+
+
+def test_unmapped_pub_types_rejected(ros2):
+    for t in ("std_msgs/Int32", "std_msgs/String"):
+        with pytest.raises(Exception):
+            ros2.PUBLICATION_SCHEMA(
+                {"topic": "/x", "type": t,
+                 "source": {"sensor": {"id": "s"}}}
+            )
+
+
 def test_auto_load_full_without_config(ros2):
     libs = ros2._auto_load()
     for lib in ("json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"):

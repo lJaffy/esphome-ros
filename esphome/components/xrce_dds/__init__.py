@@ -65,9 +65,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_MAX_PACKET_LENGTH, default=512): cv.positive_int,
             cv.Optional(CONF_PROCESS_INTERVAL, default="10ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_KEEPALIVE_TIMEOUT, default="5s"): cv.positive_time_period_milliseconds,
-            cv.Optional(CONF_MAX_TOPICS, default=16): cv.positive_int,
-            cv.Optional(CONF_MAX_DATAWRITERS, default=8): cv.positive_int,
-            cv.Optional(CONF_MAX_DATAREADERS, default=8): cv.positive_int,
+            cv.Optional(CONF_MAX_TOPICS, default=16): cv.int_range(min=1, max=16),
+            cv.Optional(CONF_MAX_DATAWRITERS, default=8): cv.int_range(min=1, max=8),
+            cv.Optional(CONF_MAX_DATAREADERS, default=8): cv.int_range(min=1, max=8),
         }
     ).extend(cv.COMPONENT_SCHEMA),
     _consume_socket,
@@ -78,8 +78,8 @@ async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     third_party = Path(__file__).parent / "third_party"
-    cg.add_build_flag(f"-I{third_party / 'micro_xrce-dds-client' / 'include'}")
-    cg.add_build_flag(f"-I{third_party / 'micro-cdr' / 'include'}")
+    cg.add_build_flag(f"-I{third_party / 'Micro-XRCE-DDS-Client' / 'include'}")
+    cg.add_build_flag(f"-I{third_party / 'micro-CDR' / 'include'}")
     cg.add(var.set_agent_address(config[CONF_AGENT_ADDRESS]))
     cg.add(var.set_agent_port(config[CONF_AGENT_PORT]))
     cg.add(var.set_domain_id(config[CONF_DOMAIN_ID]))

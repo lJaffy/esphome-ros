@@ -80,6 +80,14 @@ IMAGE_TYPES = [
 ]
 SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES
 
+# Codec-complete (JSON + XCDR + parity) but with no entity mapping yet:
+# dispatch and poll silently ignore these, so validation rejects them loudly
+# until a target:/source: binding exists.
+UNMAPPED_TYPES = [
+    "std_msgs/Int32",
+    "std_msgs/String",
+]
+
 LIGHT_FIELDS = ["rgb", "brightness"]
 
 
@@ -150,6 +158,10 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
         raise cv.Invalid(
             "Use exactly one of target: or targets: per subscription")
     type_ = config[CONF_TYPE]
+    if type_ in UNMAPPED_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is schema-reserved: codec exists but no "
+            "target: entity mapping yet")
     if type_ in MULTI_JOINT_TYPES and not has_targets:
         raise cv.Invalid(f"Type {type_} requires targets: (plural)")
     if type_ not in MULTI_JOINT_TYPES and has_targets:
@@ -206,6 +218,10 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         raise cv.Invalid(
             "Use exactly one of source: or sources: per publication")
     type_ = config[CONF_TYPE]
+    if type_ in UNMAPPED_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is schema-reserved: codec exists but no "
+            "source: entity mapping yet")
     if type_ in MULTI_JOINT_TYPES and not has_sources:
         raise cv.Invalid(f"Type {type_} requires sources: (plural)")
     if type_ not in MULTI_JOINT_TYPES and has_sources:
