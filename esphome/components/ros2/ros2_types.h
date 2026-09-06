@@ -12,6 +12,8 @@ namespace esphome
 
     constexpr size_t ROS2_MAX_JOINTS = 16;
     constexpr size_t ROS2_MAX_TRAJ_POINTS = 2;
+    constexpr size_t ROS2_MAX_JOY_AXES = 16;
+    constexpr size_t ROS2_MAX_JOY_BUTTONS = 16;
     constexpr size_t ROS2_NAME_LEN = 32;
     constexpr size_t ROS2_STRING_LEN = 256;
     constexpr size_t ROS2_FRAME_ID_LEN = 64;
@@ -69,6 +71,23 @@ namespace esphome
       char joint_names[ROS2_MAX_JOINTS][ROS2_NAME_LEN]{0};
       uint8_t num_points{0};
       JointTrajectoryPointMsg points[ROS2_MAX_TRAJ_POINTS]{};
+    };
+
+    struct ColorRGBAMsg
+    {
+      float r{0.0f};
+      float g{0.0f};
+      float b{0.0f};
+      float a{0.0f};
+    };
+
+    struct JoyMsg
+    {
+      HeaderMsg header;
+      uint8_t num_axes{0};
+      uint8_t num_buttons{0};
+      float axes[ROS2_MAX_JOY_AXES]{0.0f};
+      int32_t buttons[ROS2_MAX_JOY_BUTTONS]{0};
     };
 
     const TypeDef *find_type(const char *name);

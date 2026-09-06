@@ -14,6 +14,7 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/camera/camera.h"
+#include "esphome/components/light/light_state.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/servo/servo.h"
 #include "esphome/components/switch/switch.h"
@@ -32,6 +33,7 @@ enum class SubKind : uint8_t {
   SERVO_SINGLE,
   SWITCH_SINGLE,
   JOINT_MULTI,
+  LIGHT_SINGLE,
 };
 
 enum class PubKind : uint8_t {
@@ -40,6 +42,12 @@ enum class PubKind : uint8_t {
   BINARY_SENSOR_SINGLE,
   JOINT_MULTI,
   IMAGE_SINGLE,
+  LIGHT_SINGLE,
+};
+
+enum class LightField : uint8_t {
+  RGB,
+  BRIGHTNESS,
 };
 
 struct JointTarget {
@@ -55,6 +63,8 @@ struct Subscription {
   SubKind kind{SubKind::SWITCH_SINGLE};
   switch_::Switch *sw{nullptr};
   servo::Servo *servo{nullptr};
+  light::LightState *light{nullptr};
+  LightField light_field{LightField::RGB};
   float min_rad{-3.14159265f};
   float max_rad{3.14159265f};
   std::array<JointTarget, ROS2_MAX_TARGETS> joints{};
@@ -76,6 +86,8 @@ struct Publication {
   switch_::Switch *sw{nullptr};
   binary_sensor::BinarySensor *bsensor{nullptr};
   camera::Camera *camera{nullptr};
+  light::LightState *light{nullptr};
+  LightField light_field{LightField::RGB};
   std::array<JointSource, ROS2_MAX_TARGETS> joints{};
   size_t num_joints{0};
   uint32_t interval_ms{1000};
@@ -99,6 +111,8 @@ class Ros2Component : public Component, public camera::CameraListener {
                               float min_rad, float max_rad);
   void add_joint_state_source(servo::Servo *servo, const char *joint_name, float min_rad, float max_rad);
   void add_switch_subscription(const char *topic, const char *type, switch_::Switch *sw);
+  void add_light_subscription(const char *topic, const char *type, light::LightState *light, const char *field);
+  uint8_t add_light_publication(const char *topic, const char *type, light::LightState *light, uint32_t interval_ms);
   uint8_t add_switch_publication(const char *topic, const char *type, switch_::Switch *sw, uint32_t interval_ms);
   uint8_t add_sensor_publication(const char *topic, const char *type, sensor::Sensor *sensor, uint32_t interval_ms);
   uint8_t add_binary_sensor_publication(const char *topic, const char *type, binary_sensor::BinarySensor *bs,
@@ -114,6 +128,9 @@ class Ros2Component : public Component, public camera::CameraListener {
   void dispatch_scalar_switch_(const Subscription &sub, const void *sample);
   void dispatch_scalar_servo_(const Subscription &sub, const void *sample);
   void dispatch_joints_(const Subscription &sub, const void *sample);
+  void dispatch_light_(const Subscription &sub, const void *sample);
+  static float clamp01_(float v);
+  static LightField parse_light_field_(const char *field);
   static float rad_to_level_(float rad, float min_rad, float max_rad);
   static float level_to_rad_(float level, float min_rad, float max_rad);
   void remember_level_(servo::Servo *servo, float level);

@@ -23,6 +23,7 @@ namespace esphome
 
     void Ros2Component::register_camera_listener_()
     {
+#ifdef USE_CAMERA
       bool want_images = false;
       for (size_t i = 0; i < this->num_pubs_; i++)
       {
@@ -36,6 +37,13 @@ namespace esphome
         camera::Camera::instance()->add_listener(this);
       else if (want_images)
         ESP_LOGE(TAG, "Image publication configured but no camera instance found");
+#else
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE)
+          ESP_LOGE(TAG, "camera support not compiled in");
+      }
+#endif
     }
 
     void Ros2Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image)
@@ -106,6 +114,10 @@ namespace esphome
               {
                 this->dispatch_scalar_servo_(s, p);
               }
+              else if (s.kind == SubKind::LIGHT_SINGLE)
+              {
+                this->dispatch_light_(s, p);
+              }
             });
         ESP_LOGI(TAG, "Subscribed: %s (%s)", sub.topic.c_str(), sub.type->name);
       }
@@ -163,6 +175,7 @@ namespace esphome
 
     void Ros2Component::dispatch_scalar_servo_(const Subscription &sub, const void *sample)
     {
+#ifdef USE_SERVO
       if (sub.servo == nullptr || sub.type == nullptr)
         return;
       if (strcmp(sub.type->name, "std_msgs/Float32") != 0)
@@ -171,10 +184,97 @@ namespace esphome
       float level = rad_to_level_(rad, sub.min_rad, sub.max_rad);
       sub.servo->write(level);
       this->remember_level_(sub.servo, level);
+#else
+      (void)sub;
+      (void)sample;
+#endif
+    }
+
+    void Ros2Component::dispatch_light_(const Subscription &sub, const void *sample)
+    {
+#ifdef USE_LIGHT
+      if (sub.light == nullptr || sub.type == nullptr)
+        return;
+      float r = 0.0f, g = 0.0f, b = 0.0f;
+      bool have_color = false;
+      bool off = false;
+      if (strcmp(sub.type->name, "std_msgs/ColorRGBA") == 0)
+      {
+        auto *msg = static_cast<const ColorRGBAMsg *>(sample);
+        if (sub.light_field == LightField::BRIGHTNESS)
+        {
+          auto call = sub.light->turn_on();
+          call.set_brightness(clamp01_(msg->a));
+          call.perform();
+          return;
+        }
+        r = clamp01_(msg->r);
+        g = clamp01_(msg->g);
+        b = clamp01_(msg->b);
+        have_color = true;
+      }
+      else if (strcmp(sub.type->name, "sensor_msgs/Joy") == 0)
+      {
+        auto *msg = static_cast<const JoyMsg *>(sample);
+        if (msg->num_buttons > 0 && msg->buttons[0] == 0)
+          off = true;
+        if (sub.light_field == LightField::BRIGHTNESS)
+        {
+          float v = msg->num_axes > 0 ? (msg->axes[0] + 1.0f) * 0.5f : 0.0f;
+          if (off)
+          {
+            sub.light->make_call().set_state(false).perform();
+            return;
+          }
+          auto call = sub.light->turn_on();
+          call.set_brightness(clamp01_(v));
+          call.perform();
+          return;
+        }
+        r = msg->num_axes > 0 ? clamp01_((msg->axes[0] + 1.0f) * 0.5f) : 0.0f;
+        g = msg->num_axes > 1 ? clamp01_((msg->axes[1] + 1.0f) * 0.5f) : 0.0f;
+        b = msg->num_axes > 2 ? clamp01_((msg->axes[2] + 1.0f) * 0.5f) : 0.0f;
+        have_color = true;
+      }
+      else
+      {
+        return;
+      }
+      if (!have_color)
+        return;
+      if (off)
+      {
+        sub.light->make_call().set_state(false).perform();
+        return;
+      }
+      auto call = sub.light->turn_on();
+      call.set_rgb(r, g, b);
+      call.perform();
+#else
+      (void)sub;
+      (void)sample;
+#endif
+    }
+
+    float Ros2Component::clamp01_(float v)
+    {
+      if (v > 1.0f)
+        return 1.0f;
+      if (v < 0.0f)
+        return 0.0f;
+      return v;
+    }
+
+    LightField Ros2Component::parse_light_field_(const char *field)
+    {
+      if (field != nullptr && strcmp(field, "brightness") == 0)
+        return LightField::BRIGHTNESS;
+      return LightField::RGB;
     }
 
     void Ros2Component::dispatch_joints_(const Subscription &sub, const void *sample)
     {
+#ifdef USE_SERVO
       if (sub.type == nullptr)
         return;
       const char *names[ROS2_MAX_JOINTS]{nullptr};
@@ -222,6 +322,10 @@ namespace esphome
           }
         }
       }
+#else
+      (void)sub;
+      (void)sample;
+#endif
     }
 
     float Ros2Component::rad_to_level_(float rad, float min_rad, float max_rad)
@@ -268,6 +372,7 @@ namespace esphome
     void Ros2Component::add_servo_subscription(const char *topic, const char *type, servo::Servo *servo, float min_rad,
                                                float max_rad)
     {
+#ifdef USE_SERVO
       if (this->num_subs_ >= ROS2_MAX_SUBSCRIPTIONS)
       {
         ESP_LOGE(TAG, "Too many subscriptions (max %u)", (unsigned)ROS2_MAX_SUBSCRIPTIONS);
@@ -287,11 +392,20 @@ namespace esphome
       sub.min_rad = min_rad;
       sub.max_rad = max_rad;
       this->subs_[this->num_subs_++] = sub;
+#else
+      (void)topic;
+      (void)type;
+      (void)servo;
+      (void)min_rad;
+      (void)max_rad;
+      ESP_LOGE(TAG, "servo support not compiled in");
+#endif
     }
 
     void Ros2Component::add_joint_subscription(const char *topic, const char *type, servo::Servo *servo,
                                                const char *joint_name, float min_rad, float max_rad)
     {
+#ifdef USE_SERVO
       const TypeDef *def = find_type(type);
       if (def == nullptr)
       {
@@ -338,11 +452,21 @@ namespace esphome
       sub.joints[0] = t;
       sub.num_joints = 1;
       this->subs_[this->num_subs_++] = sub;
+#else
+      (void)topic;
+      (void)type;
+      (void)servo;
+      (void)joint_name;
+      (void)min_rad;
+      (void)max_rad;
+      ESP_LOGE(TAG, "servo support not compiled in");
+#endif
     }
 
     void Ros2Component::add_joint_state_source(servo::Servo *servo, const char *joint_name,
                                                float min_rad, float max_rad)
     {
+#ifdef USE_SERVO
       if (this->num_pubs_ == 0)
         return;
       Publication &pub = this->pubs_[this->num_pubs_ - 1];
@@ -356,6 +480,13 @@ namespace esphome
       s.min_rad = min_rad;
       s.max_rad = max_rad;
       pub.joints[pub.num_joints++] = s;
+#else
+      (void)servo;
+      (void)joint_name;
+      (void)min_rad;
+      (void)max_rad;
+      ESP_LOGE(TAG, "servo support not compiled in");
+#endif
     }
 
     void Ros2Component::add_switch_subscription(const char *topic, const char *type, switch_::Switch *sw)
@@ -493,6 +624,7 @@ namespace esphome
 
     uint8_t Ros2Component::add_joint_state_publication(const char *topic, const char *type, uint32_t interval_ms)
     {
+#ifdef USE_SERVO
       if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
       {
         ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned)ROS2_MAX_PUBLICATIONS);
@@ -511,11 +643,94 @@ namespace esphome
       pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
       this->pubs_[this->num_pubs_] = pub;
       return this->num_pubs_++;
+#else
+      (void)topic;
+      (void)type;
+      (void)interval_ms;
+      ESP_LOGE(TAG, "servo support not compiled in");
+      return 255;
+#endif
+    }
+
+    void Ros2Component::add_light_subscription(const char *topic, const char *type, light::LightState *light,
+                                               const char *field)
+    {
+#ifdef USE_LIGHT
+      if (this->num_subs_ >= ROS2_MAX_SUBSCRIPTIONS)
+      {
+        ESP_LOGE(TAG, "Too many subscriptions (max %u)", (unsigned)ROS2_MAX_SUBSCRIPTIONS);
+        return;
+      }
+      const TypeDef *def = find_type(type);
+      if (def == nullptr)
+      {
+        ESP_LOGE(TAG, "Unknown type '%s' for topic %s", type, topic);
+        return;
+      }
+      if (strcmp(def->name, "std_msgs/ColorRGBA") != 0 && strcmp(def->name, "sensor_msgs/Joy") != 0)
+      {
+        ESP_LOGE(TAG, "Light targets need std_msgs/ColorRGBA or sensor_msgs/Joy (got %s)", type);
+        return;
+      }
+      Subscription sub;
+      sub.topic = topic;
+      sub.type = def;
+      sub.kind = SubKind::LIGHT_SINGLE;
+      sub.light = light;
+      sub.light_field = parse_light_field_(field);
+      this->subs_[this->num_subs_++] = sub;
+#else
+      (void)topic;
+      (void)type;
+      (void)light;
+      (void)field;
+      ESP_LOGE(TAG, "light support not compiled in");
+#endif
+    }
+
+    uint8_t Ros2Component::add_light_publication(const char *topic, const char *type, light::LightState *light,
+                                                 uint32_t interval_ms)
+    {
+#ifdef USE_LIGHT
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned)ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type(type);
+      if (def == nullptr || strcmp(def->name, "std_msgs/ColorRGBA") != 0)
+      {
+        ESP_LOGE(TAG, "Light publication needs std_msgs/ColorRGBA (got '%s')", type);
+        return 255;
+      }
+      if (light == nullptr)
+      {
+        ESP_LOGE(TAG, "Light publication needs a light (got null)");
+        return 255;
+      }
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::LIGHT_SINGLE;
+      pub.light = light;
+      pub.light_field = LightField::RGB;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+#else
+      (void)topic;
+      (void)type;
+      (void)light;
+      (void)interval_ms;
+      ESP_LOGE(TAG, "light support not compiled in");
+      return 255;
+#endif
     }
 
     uint8_t Ros2Component::add_image_publication(const char *topic, const char *type, camera::Camera *camera,
-                                                uint32_t interval_ms)
+                                                 uint32_t interval_ms)
     {
+#ifdef USE_CAMERA
       if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
       {
         ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
@@ -540,6 +755,14 @@ namespace esphome
       pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
       this->pubs_[this->num_pubs_] = pub;
       return this->num_pubs_++;
+#else
+      (void)topic;
+      (void)type;
+      (void)camera;
+      (void)interval_ms;
+      ESP_LOGE(TAG, "camera support not compiled in");
+      return 255;
+#endif
     }
 
     void Ros2Component::poll_publication_(Publication &pub)
@@ -599,6 +822,26 @@ namespace esphome
           msg.position[i] = level_to_rad_(level, pub.joints[i].min_rad, pub.joints[i].max_rad);
         }
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+      }
+      else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
+      {
+#ifdef USE_LIGHT
+        if (pub.kind != PubKind::LIGHT_SINGLE || pub.light == nullptr)
+          return;
+        ColorRGBAMsg msg;
+        if (pub.light_field == LightField::BRIGHTNESS)
+        {
+          msg.a = pub.light->remote_values.get_brightness();
+        }
+        else
+        {
+          msg.r = pub.light->remote_values.get_red();
+          msg.g = pub.light->remote_values.get_green();
+          msg.b = pub.light->remote_values.get_blue();
+          msg.a = pub.light->remote_values.get_brightness();
+        }
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+#endif
       }
     }
 

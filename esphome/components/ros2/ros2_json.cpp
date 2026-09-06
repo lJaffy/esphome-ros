@@ -173,6 +173,60 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
       return true;
     }) && ok;
   }
+  if (strcmp(type->name, "std_msgs/ColorRGBA") == 0) {
+    if (out_len < sizeof(ColorRGBAMsg))
+      return false;
+    auto *msg = static_cast<ColorRGBAMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      if (root["r"].is<float>())
+        msg->r = root["r"].as<float>();
+      if (root["g"].is<float>())
+        msg->g = root["g"].as<float>();
+      if (root["b"].is<float>())
+        msg->b = root["b"].as<float>();
+      if (root["a"].is<float>())
+        msg->a = root["a"].as<float>();
+      ok = true;
+      return true;
+    }) && ok;
+  }
+  if (strcmp(type->name, "sensor_msgs/Joy") == 0) {
+    if (out_len < sizeof(JoyMsg))
+      return false;
+    auto *msg = static_cast<JoyMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      JsonArrayConst axes = root["axes"].as<JsonArrayConst>();
+      if (!axes.isNull()) {
+        size_t n = axes.size();
+        if (n > ROS2_MAX_JOY_AXES)
+          n = ROS2_MAX_JOY_AXES;
+        msg->num_axes = n;
+        size_t i = 0;
+        for (JsonVariantConst v : axes) {
+          if (i >= n)
+            break;
+          msg->axes[i++] = v.as<float>();
+        }
+      }
+      JsonArrayConst buttons = root["buttons"].as<JsonArrayConst>();
+      if (!buttons.isNull()) {
+        size_t n = buttons.size();
+        if (n > ROS2_MAX_JOY_BUTTONS)
+          n = ROS2_MAX_JOY_BUTTONS;
+        msg->num_buttons = n;
+        size_t i = 0;
+        for (JsonVariantConst v : buttons) {
+          if (i >= n)
+            break;
+          msg->buttons[i++] = v.as<int>();
+        }
+      }
+      ok = true;
+      return true;
+    }) && ok;
+  }
   return false;
 }
 
@@ -205,6 +259,28 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
         names.add(msg->name[i]);
         pos.add(msg->position[i]);
       }
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "std_msgs/ColorRGBA") == 0 && len >= sizeof(ColorRGBAMsg)) {
+    auto *msg = static_cast<const ColorRGBAMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      root["r"] = msg->r;
+      root["g"] = msg->g;
+      root["b"] = msg->b;
+      root["a"] = msg->a;
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "sensor_msgs/Joy") == 0 && len >= sizeof(JoyMsg)) {
+    auto *msg = static_cast<const JoyMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      JsonArray axes = root["axes"].to<JsonArray>();
+      JsonArray buttons = root["buttons"].to<JsonArray>();
+      for (uint8_t i = 0; i < msg->num_axes; i++)
+        axes.add(msg->axes[i]);
+      for (uint8_t i = 0; i < msg->num_buttons; i++)
+        buttons.add(msg->buttons[i]);
     });
     return std::string(buf.c_str(), buf.size());
   }

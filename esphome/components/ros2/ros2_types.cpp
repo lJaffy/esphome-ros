@@ -12,6 +12,8 @@ static const TypeDef K_TYPE_DEFS[] = {
     {"std_msgs/String", "std_msgs__String", sizeof(StringMsg)},
     {"sensor_msgs/JointState", "sensor_msgs__JointState", sizeof(JointStateMsg)},
     {"trajectory_msgs/JointTrajectory", "trajectory_msgs__JointTrajectory", sizeof(JointTrajectoryMsg)},
+    {"std_msgs/ColorRGBA", "std_msgs__ColorRGBA", sizeof(ColorRGBAMsg)},
+    {"sensor_msgs/Joy", "sensor_msgs__Joy", sizeof(JoyMsg)},
     // Variable-length frame buffer; not backed by a fixed struct. Size 0 marks
     // types published straight from the source buffer (see publish_image).
     {"sensor_msgs/CompressedImage", "sensor_msgs__CompressedImage", 0},

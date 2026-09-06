@@ -3,6 +3,7 @@ import math
 import esphome.codegen as cg
 from esphome.components import binary_sensor as bs_comp
 from esphome.components.binary_sensor import BinarySensor
+from esphome.components.light import LightState
 from esphome.components.sensor import Sensor
 from esphome.components.servo import Servo
 from esphome.components.switch import Switch
@@ -12,12 +13,30 @@ from esphome.types import ConfigType
 
 
 def _auto_load(config=None):
-    # Servo lib must always be present: servo code paths are compiled
-    # unconditionally so JointState dispatch links even for switch-only
-    # configs. Configs without servos pay a small flash cost. Camera lib is
-    # likewise always present so the image publish path always links; the
-    # listener only registers when an image publication is configured.
-    return ["json", "binary_sensor", "sensor", "switch", "servo", "camera"]
+    # Config-conditional: only pull the entity libs the YAML actually uses.
+    # Called with no args during dependency resolution -> full superset.
+    # Codec (ros2_json.cpp) and type table stay whole: no per-type guards.
+    full = ["json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"]
+    if not config:
+        return full
+    libs = {"json"}
+    for sub in config.get(CONF_SUBSCRIPTIONS, []):
+        if (target := sub.get(CONF_TARGET)) is not None:
+            for kind in ("servo", "switch", "light"):
+                if target.get(kind) is not None:
+                    libs.add(kind)
+        elif sub.get(CONF_TARGETS) is not None:
+            libs.add("servo")
+    for pub in config.get(CONF_PUBLICATIONS, []):
+        if (source := pub.get(CONF_SOURCE)) is not None:
+            for kind in ("sensor", "switch", "binary_sensor", "camera", "light"):
+                if source.get(kind) is not None:
+                    libs.add(kind)
+        elif pub.get(CONF_SOURCES) is not None:
+            libs.add("servo")
+    if config.get(CONF_STATUS_SENSOR) is not None:
+        libs.add("binary_sensor")
+    return sorted(libs, key=full.index)
 
 
 AUTO_LOAD = _auto_load
@@ -52,10 +71,16 @@ MULTI_JOINT_TYPES = [
     "sensor_msgs/JointState",
     "trajectory_msgs/JointTrajectory",
 ]
+LIGHT_TYPES = [
+    "std_msgs/ColorRGBA",
+    "sensor_msgs/Joy",
+]
 IMAGE_TYPES = [
     "sensor_msgs/CompressedImage",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + IMAGE_TYPES
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES
+
+LIGHT_FIELDS = ["rgb", "brightness"]
 
 
 def _entity_ref(entity_cls):
@@ -79,11 +104,21 @@ def _servo_target_schema():
     )
 
 
+def _light_target_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(LightState),
+            cv.Optional(CONF_FIELD, default="rgb"): cv.one_of(*LIGHT_FIELDS),
+        }
+    )
+
+
 def _single_target_schema():
     return cv.Schema(
         {
             cv.Optional("servo"): _servo_target_schema(),
             cv.Optional("switch"): _entity_ref(Switch),
+            cv.Optional("light"): _light_target_schema(),
         }
     )
 
@@ -103,6 +138,7 @@ def _single_source_schema():
             cv.Optional("switch"): _entity_ref(Switch),
             cv.Optional("binary_sensor"): _entity_ref(BinarySensor),
             cv.Optional("camera"): _camera_source_schema(),
+            cv.Optional("light"): _light_target_schema(),
         }
     )
 
@@ -119,14 +155,18 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
     if type_ not in MULTI_JOINT_TYPES and has_targets:
         raise cv.Invalid(f"Type {type_} requires target: (singular)")
     if has_target:
-        kinds = [k for k in ("servo", "switch")
+        kinds = [k for k in ("servo", "switch", "light")
                  if config[CONF_TARGET].get(k) is not None]
         if len(kinds) != 1:
-            raise cv.Invalid("target: needs exactly one of servo:, switch:")
+            raise cv.Invalid("target: needs exactly one of servo:, switch:, light:")
         if "servo" in kinds and type_ == "std_msgs/Bool":
             raise cv.Invalid("servo: targets need std_msgs/Float32")
+        if "servo" in kinds and type_ in LIGHT_TYPES:
+            raise cv.Invalid(f"servo: targets cannot use {type_} (needs light:)")
         if "switch" in kinds and type_ != "std_msgs/Bool":
             raise cv.Invalid("switch: targets need std_msgs/Bool")
+        if "light" in kinds and type_ not in LIGHT_TYPES:
+            raise cv.Invalid(f"light: targets need one of {LIGHT_TYPES}")
     if has_targets:
         seen = set()
         for entry in config[CONF_TARGETS]:
@@ -171,11 +211,11 @@ def _validate_publication(config: ConfigType) -> ConfigType:
     if type_ not in MULTI_JOINT_TYPES and has_sources:
         raise cv.Invalid(f"Type {type_} requires source: (singular)")
     if has_source:
-        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera")
+        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light")
                  if config[CONF_SOURCE].get(k) is not None]
         if len(kinds) != 1:
             raise cv.Invalid(
-                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:")
+                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:")
         if "sensor" in kinds and type_ != "std_msgs/Float32":
             raise cv.Invalid("sensor: sources need std_msgs/Float32")
         if ("switch" in kinds or "binary_sensor" in kinds) and type_ != "std_msgs/Bool":
@@ -183,6 +223,10 @@ def _validate_publication(config: ConfigType) -> ConfigType:
                 "switch:/binary_sensor: sources need std_msgs/Bool")
         if "camera" in kinds and type_ not in IMAGE_TYPES:
             raise cv.Invalid("camera: sources need sensor_msgs/CompressedImage")
+        if "light" in kinds and type_ != "std_msgs/ColorRGBA":
+            raise cv.Invalid("light: sources need std_msgs/ColorRGBA")
+    if type_ == "sensor_msgs/Joy" and has_source:
+        raise cv.Invalid("sensor_msgs/Joy is subscribe-only (no source entity produces axes/buttons)")
     return config
 
 
@@ -231,6 +275,9 @@ async def to_code(config: ConfigType) -> None:
             elif (sw := target.get("switch")) is not None:
                 ent = await cg.get_variable(sw[CONF_ID])
                 cg.add(var.add_switch_subscription(topic, type_, ent))
+            elif (light := target.get("light")) is not None:
+                ent = await cg.get_variable(light[CONF_ID])
+                cg.add(var.add_light_subscription(topic, type_, ent, light[CONF_FIELD]))
         else:
             for entry in sub[CONF_TARGETS]:
                 servo = entry["servo"]
@@ -260,6 +307,9 @@ async def to_code(config: ConfigType) -> None:
             elif (cam := source.get("camera")) is not None:
                 ent = await cg.get_variable(cam[CONF_ID])
                 cg.add(var.add_image_publication(topic, type_, ent, interval))
+            elif (light := source.get("light")) is not None:
+                ent = await cg.get_variable(light[CONF_ID])
+                cg.add(var.add_light_publication(topic, type_, ent, interval))
         else:
             cg.add(var.add_joint_state_publication(topic, type_, interval))
             for entry in pub[CONF_SOURCES]:

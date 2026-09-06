@@ -23,6 +23,8 @@ ROS2_DIR = REPO / "esphome" / "components" / "ros2"
 EXPECTED_MSG_FIELDS = {
     "sensor_msgs/msg/JointState.msg": ["header", "name", "position", "velocity", "effort"],
     "sensor_msgs/msg/CompressedImage.msg": ["header", "format", "data"],
+    "sensor_msgs/msg/Joy.msg": ["header", "axes", "buttons"],
+    "std_msgs/msg/ColorRGBA.msg": ["r", "g", "b", "a"],
     "trajectory_msgs/msg/JointTrajectory.msg": ["header", "joint_names", "points"],
     "trajectory_msgs/msg/JointTrajectoryPoint.msg": [
         "positions", "velocities", "accelerations", "effort", "time_from_start",
@@ -40,6 +42,7 @@ EXPECTED_MSG_FIELDS = {
 EXPECTED_WIRE_KEYS = [
     "name", "position", "velocity", "effort",
     "joint_names", "points", "positions", "data", "format",
+    "axes", "buttons", "r", "g", "b", "a",
 ]
 
 # Struct members mirroring canonical fields (bounded MCU projection).
@@ -47,6 +50,8 @@ EXPECTED_MEMBERS = [
     "char name[", "float position[", "float velocity[", "float effort[",
     "char joint_names[", "float positions[", "float velocities[",
     "float accelerations[", "stamp_sec", "stamp_nsec", "frame_id",
+    "float axes[", "int32_t buttons[",
+    "float r{", "float g{", "float b{", "float a{",
 ]
 
 
