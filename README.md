@@ -1,0 +1,344 @@
+# ESPHome ROS 2 Custom Components
+
+Declarative ESPHome → ROS 2 bridge for microcontrollers. No lambdas required.
+
+Three local custom components under `esphome/components/`:
+
+| Component | Role | Middleware name | Deps |
+|---|---|---|---|
+| `ros2` | Core bridge: maps ESPHome entities to ROS 2 topics (pub/sub) | — (consumes `middleware:`) | `json` + conditional `sensor`, `switch`, `binary_sensor`, `servo`, `camera`, `light` |
+| `ros2_mqtt` | JSON-over-MQTT transport (debug / fallback) | `mqtt` | `mqtt`, `ros2`, `json` |
+| `xrce_dds` | Native XRCE-DDS transport via `micro-ros-agent` (production) | `xrce_dds` | `ros2`, `network` |
+
+> Ignored and intentionally undocumented: `scratch/` (PoC), `examples/.esphome/`, `__pycache__/`, `.pytest_cache/`, `build/`, `.venv/`, `dist/`. See root `.gitignore` and `examples/.gitignore`.
+
+## Requirements
+
+- `esphome>=2026.6.0` (`requirements.txt`)
+- `pytest>=8.0` for tests (`requirements_dev.txt`)
+- Submodules: `third_party/common_interfaces` (ROS 2 IDL ground truth), `esphome/components/xrce_dds/third_party/Micro-XRCE-DDS-Client`, `.../micro-CDR`
+
+```bash
+git submodule update --init --recursive
+pip install -r requirements_dev.txt
+```
+
+## Install
+
+All examples use local external components:
+
+```yaml
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+```
+
+## `ros2`: core component
+
+`Ros2Component` (`Component`, `CameraListener`, `AFTER_CONNECTION`) looks up `middleware:` by name in `MiddlewareRegistry`, retries every 1s, polls timed publications in `loop()`, pushes camera frames via `on_camera_image()`, and optionally drives a `status_sensor` from `connected()`.
+
+Limits: 16 subscriptions, 16 publications, 16 targets/sources per topic, 16 joints, 2 trajectory points, 16 joy axes/buttons, name 32 B, string 256 B, frame_id 64 B.
+
+### Use-cases
+
+1. **Robot actuator (subscribe):** drive servos from `/joint_states` or `/joint_trajectory`, single `Float32` → one servo, `Bool` → switch.
+2. **Sensor telemetry (publish):** `sensor` → `Float32`, `switch`/`binary_sensor` → `Bool`, servo positions → `JointState` echo.
+3. **RGB signaling (bidirectional):** `ColorRGBA` ↔ `light`, `Joy` → `light` for gamepad control.
+4. **Vision (publish-only push):** `camera` → `CompressedImage` (base64-in-JSON on MQTT, fragmented CDR on XRCE).
+5. **Link health:** `status_sensor` binary_sensor mirrors middleware `connected()`.
+
+### Message types and entity bindings
+
+| ROS 2 type | Subscribe `target:`/`targets:` | Publish `source:`/`sources:` |
+|---|---|---|
+| `std_msgs/Bool` | `switch` | `switch`, `binary_sensor` |
+| `std_msgs/Float32` | `servo` (single) | `sensor` |
+| `std_msgs/Int32`, `std_msgs/String` | — (rejected: codec-only, no entity mapping yet) | — (rejected) |
+| `sensor_msgs/JointState`, `trajectory_msgs/JointTrajectory` | `targets: [servo + joint_name]` | `sources: [servo + joint_name]` (trajectory uses `points[0]`) |
+| `std_msgs/ColorRGBA` | `light (field: rgb\|brightness)` | `light` |
+| `sensor_msgs/Joy` | `light (field: rgb)` — subscribe-only | — (rejected) |
+| `sensor_msgs/CompressedImage` | — | `camera` |
+
+`servo` mapping: `rad ↔ level -1..1` via `min_rad`/`max_rad` (default ∓π). `light rgb`: `r,g,b 0..1`, `a`/brightness; `Joy axes[0..2] → R,G,B`, `buttons[0]==0` = off.
+
+Lossy by design, all bounded static allocation (no heap on hot path): joint names truncated to 31 chars + NUL, incoming joint lists clamped to 16, trajectory uses `points[0]` only with vel/eff zeroed, stamps are `0` (no clock sync yet). Publications are skipped while the middleware is disconnected (samples dropped, never queued); camera frames are dropped when throttled or offline.
+
+### Full `ros2` reference
+
+```yaml
+ros2:
+  middleware: mqtt  # required: "mqtt" | "xrce_dds" (MiddlewareRegistry name)
+  default_publish_interval: 1s  # optional, per-publication `interval:` overrides
+  status_sensor:
+    platform: template  # optional, reflects middleware connected()
+    name: ROS2 link
+  subscriptions:
+    # single-entity:
+    - topic: /gripper/close
+      type: std_msgs/Bool
+      target:
+        switch:
+          id: gripper_switch
+    - topic: /pan/command
+      type: std_msgs/Float32
+      target:
+        servo:
+          id: pan_servo
+          field: position
+          min_rad: -1.5708
+          max_rad: 1.5708
+    # multi-joint (joint_name required, unique):
+    - topic: /joint_states
+      type: sensor_msgs/JointState
+      targets:
+        - servo: {id: servo_1, joint_name: joint_1, min_rad: -1.5708, max_rad: 1.5708}
+    # light:
+    - topic: /led/color
+      type: std_msgs/ColorRGBA
+      target:
+        light: {id: lamp, field: rgb}  # rgb | brightness
+  publications:
+    - topic: /temp
+      type: std_msgs/Float32
+      source: {sensor: {id: temp_sensor}}
+      interval: 10s
+    - topic: /joint_states_echo
+      type: sensor_msgs/JointState
+      sources:
+        - servo: {id: servo_1, joint_name: joint_1}
+      interval: 100ms
+    - topic: /led/color_echo
+      type: std_msgs/ColorRGBA
+      source: {light: {id: lamp}}
+    - topic: /camera/image/compressed
+      type: sensor_msgs/CompressedImage
+      source: {camera: {id: sense_camera}}
+```
+
+Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and `Joy` publications are rejected at validation, not silently dropped.
+
+## `ros2_mqtt`: JSON-over-MQTT transport
+
+Debug path: ROS 2 topics as JSON payloads on the ESPHome MQTT client. Registers `"mqtt"`.
+
+```yaml
+mqtt:
+  broker: 192.168.1.10
+  topic_prefix: digitaltwin/stewart
+
+ros2_mqtt:
+  topic_prefix: ""      # prepended to ROS topic
+  default_qos: 0
+  default_retain: false # images never retained
+```
+
+Images are hand-encoded `{"format":"jpeg","data":"<base64>"}` (no ArduinoJson arena blow-up).
+
+## `xrce_dds`: native DDS transport
+
+Production path: speaks XRCE-DDS to `micro-ros-agent`, appears as a real ROS 2 node. Registers `"xrce_dds"`. Own non-blocking UDP socket (lwIP) or UART shim; hand-written XCDR-LE codec, no heap on hot path.
+
+```yaml
+xrce_dds:
+  agent_address: 192.168.1.10  # required, IPv4 literal
+  agent_port: 8888
+  transport:
+    type: udp                 # udp | serial
+    # uart_id: uart_bus       # required if serial
+  domain_id: 0                # 0-255
+  client_name: stewart
+  process_interval: 10ms
+  keepalive_timeout: 5s       # also reconnect backoff
+  max_topics: 16
+  max_datawriters: 8
+  max_datareaders: 8
+  # max_packet_length: 512    # currently ignored, vendored MTU wins
+```
+
+Agent:
+
+```bash
+MicroXRCEAgent udp4 -p 8888
+ros2 topic echo /joint_states
+```
+
+Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4. `max_topics`/`max_datawriters`/`max_datareaders` are clamped at validation to those compile-time caps, and distinct DDS topics (shared across readers/writers) are budgeted at runtime — over-budget `subscribe`/`publish` fails loudly instead of overflowing.
+
+## Examples
+
+All under `examples/` (run `esphome compile <file>` or Dashboard).
+
+### 1. `joy_color_light.yaml` — gamepad RGB lamp (ESP32-S3, MQTT)
+
+```yaml
+esphome: {name: joy-light-demo, friendly_name: Joy Light Demo}
+esp32: {board: esp32-s3-devkitc-1}
+logger:
+wifi: {ssid: wifi, password: wifi_password}
+external_components:
+  - source: {type: local, path: ../esphome/components/}
+mqtt: {broker: 192.168.1.10, topic_prefix: digitaltwin/joy-light}
+ros2_mqtt: {default_qos: 0}
+output:
+  - {platform: gpio, id: led_r, pin: GPIO4}
+  - {platform: gpio, id: led_g, pin: GPIO5}
+  - {platform: gpio, id: led_b, pin: GPIO6}
+light:
+  - platform: rgb
+    id: lamp
+    name: Demo Lamp
+    red: led_r
+    green: led_g
+    blue: led_b
+ros2:
+  middleware: mqtt
+  subscriptions:
+    - topic: /led/color
+      type: std_msgs/ColorRGBA
+      target: {light: {id: lamp, field: rgb}}
+    - topic: /joy
+      type: sensor_msgs/Joy
+      target: {light: {id: lamp, field: rgb}}
+  publications:
+    - topic: /led/color_echo
+      type: std_msgs/ColorRGBA
+      source: {light: {id: lamp}}
+      interval: 1s
+```
+
+### 2. `stewart_jointstate.yaml` — 6-DOF Stewart via MQTT
+
+ESP32-S3 + PCA9685 (`GPIO8/7`, 50 Hz, ch 0–5) + 6× servo. Replaces PoC lambda with name-based `JointState` matching.
+
+```yaml
+mqtt: {broker: 192.168.1.10, topic_prefix: digitaltwin/stewart}
+ros2_mqtt: {default_qos: 0}
+ros2:
+  middleware: mqtt
+  subscriptions:
+    - topic: /joint_states
+      type: sensor_msgs/JointState
+      targets:
+        - servo: {id: servo_1, joint_name: joint_1, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_2, joint_name: joint_2, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_3, joint_name: joint_3, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_4, joint_name: joint_4, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_5, joint_name: joint_5, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_6, joint_name: joint_6, min_rad: -1.5708, max_rad: 1.5708}
+  publications:
+    - topic: /joint_states_echo
+      type: sensor_msgs/JointState
+      sources:
+        - servo: {id: servo_1, joint_name: joint_1, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_2, joint_name: joint_2, min_rad: -1.5708, max_rad: 1.5708}
+      interval: 100ms
+i2c: {sda: GPIO8, scl: GPIO7, scan: true}
+pca9685: [{id: pca9685_hub1, frequency: 50}]
+# + 6x pca9685 output + 6x servo (see file for full listing)
+```
+
+### 3. `stewart_xrce_dds.yaml` — same Stewart over XRCE-DDS
+
+Identical servos, no `mqtt:`/`ros2_mqtt:`:
+
+```yaml
+esphome: {name: platform-dds, friendly_name: platform DDS}
+esp32: {board: esp32-s3-devkitc-1}
+logger:
+api:
+wifi: {ssid: wifi, password: wifi_password}
+external_components:
+  - source: {type: local, path: ../esphome/components/}
+xrce_dds:
+  agent_address: 192.168.1.10
+  agent_port: 8888
+  transport: {type: udp}
+  domain_id: 0
+  client_name: stewart
+ros2:
+  middleware: xrce_dds
+  subscriptions:
+    - topic: /joint_states
+      type: sensor_msgs/JointState
+      targets:
+        - servo: {id: servo_1, joint_name: joint_1, min_rad: -1.5708, max_rad: 1.5708}
+        # ... servo_2..6 identical (see file)
+  publications:
+    - topic: /joint_states_echo
+      type: sensor_msgs/JointState
+      sources:
+        - servo: {id: servo_1, joint_name: joint_1, min_rad: -1.5708, max_rad: 1.5708}
+        - servo: {id: servo_2, joint_name: joint_2, min_rad: -1.5708, max_rad: 1.5708}
+      interval: 100ms
+```
+
+### 4. `xiao_sense_camera.yaml` — CompressedImage (XIAO Sense, MQTT)
+
+```yaml
+esphome: {name: xiao-sense-cam, friendly_name: Xiao Sense Cam}
+esp32:
+  board: seeed_xiao_esp32s3
+  framework: {type: esp-idf}
+logger:
+wifi: {ssid: wifi, password: wifi_password}
+external_components:
+  - source: {type: local, path: ../esphome/components/}
+mqtt: {broker: 192.168.1.10, topic_prefix: digitaltwin/xiao-sense}
+ros2_mqtt: {default_qos: 0}
+esp32_camera:
+  id: sense_camera
+  name: Sense Camera
+  external_clock: {pin: GPIO10, frequency: 20MHz}
+  i2c_pins: {sda: GPIO40, scl: GPIO39}
+  data_pins: [GPIO15, GPIO17, GPIO18, GPIO16, GPIO14, GPIO12, GPIO11, GPIO48]
+  vsync_pin: GPIO38
+  href_pin: GPIO47
+  pixel_clock_pin: GPIO13
+  resolution: 1600x1200
+  jpeg_quality: 14
+  max_framerate: 1 fps
+  idle_framerate: 1 fps
+ros2:
+  middleware: mqtt
+  publications:
+    - topic: /camera/image/compressed
+      type: sensor_msgs/CompressedImage
+      source: {camera: {id: sense_camera}}
+      interval: 1s
+```
+
+Drop to XGA/SVGA if heap degrades at 1 fps.
+
+## Middleware choice
+
+|  | `ros2_mqtt` | `xrce_dds` |
+|---|---|---|
+| Wire | JSON on MQTT | Bare CDR to `micro-ros-agent` |
+| ROS 2 visibility | Needs bridge | Native node |
+| Camera | base64 JSON, QoS 0 | Fragmented stream |
+| Best for | Debug, dashboards | Production control |
+
+## Tests
+
+```bash
+python -m pytest tests/test_ros2_phase1.py      # ros2 schema validation (needs esphome)
+python -m pytest tests/test_xrce_dds_config.py  # xrce_dds schema (needs esphome)
+python -m pytest tests/test_ros2_msg_parity.py  # stdlib-only IDL parity vs third_party/common_interfaces
+python -m pytest tests/
+```
+
+## Repo layout
+
+```text
+esphome/components/ros2/       # __init__.py, ros2_component.{h,cpp}, ros2_{types,json,middleware}.{h,cpp}
+esphome/components/ros2_mqtt/  # __init__.py, ros2_mqtt.{h,cpp}
+esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}
+examples/*.yaml                # 4 demos above
+tests/*.py                     # 3 pytest files
+third_party/common_interfaces  # submodule, canonical .msg
+```
+
+## License
+
+MIT © 2026 lJaffy. See `LICENSE`.
