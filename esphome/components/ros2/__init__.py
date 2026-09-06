@@ -36,6 +36,8 @@ def _auto_load(config=None):
             for kind in ("sensor", "switch", "binary_sensor", "camera", "light"):
                 if source.get(kind) is not None:
                     libs.add(kind)
+            if source.get(CONF_IMU) is not None:
+                libs.add("sensor")
         elif pub.get(CONF_SOURCES) is not None:
             libs.add("servo")
     if config.get(CONF_STATUS_SENSOR) is not None:
@@ -89,6 +91,17 @@ CONF_CHILD_FRAME_ID = "child_frame_id"
 CONF_TF_TOPIC = "tf_topic"
 CONF_TRANSLATION = "translation"
 CONF_ROTATION = "rotation"
+CONF_IMU = "imu"
+CONF_ACCEL_X = "accel_x"
+CONF_ACCEL_Y = "accel_y"
+CONF_ACCEL_Z = "accel_z"
+CONF_GYRO_X = "gyro_x"
+CONF_GYRO_Y = "gyro_y"
+CONF_GYRO_Z = "gyro_z"
+CONF_ORIENTATION_X = "orientation_x"
+CONF_ORIENTATION_Y = "orientation_y"
+CONF_ORIENTATION_Z = "orientation_z"
+CONF_ORIENTATION_W = "orientation_w"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -116,7 +129,10 @@ MOTION_TYPES = [
     "nav_msgs/Odometry",
     "tf2_msgs/TFMessage",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES
+IMU_TYPES = [
+    "sensor_msgs/Imu",
+]
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES + IMU_TYPES
 
 # Types with std_msgs/Header: stamp comes from the time: source, frame_id
 # from each publication's frame_id:.
@@ -128,6 +144,7 @@ HEADER_TYPES = [
     "sensor_msgs/Range",
     "sensor_msgs/BatteryState",
     "nav_msgs/Odometry",
+    "sensor_msgs/Imu",
 ]
 
 QOS_LEVELS = ["reliable", "best_effort"]
@@ -253,6 +270,23 @@ def _odom_source_schema():
     )
 
 
+def _imu_source_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_ACCEL_X): _entity_ref(Sensor),
+            cv.Required(CONF_ACCEL_Y): _entity_ref(Sensor),
+            cv.Required(CONF_ACCEL_Z): _entity_ref(Sensor),
+            cv.Required(CONF_GYRO_X): _entity_ref(Sensor),
+            cv.Required(CONF_GYRO_Y): _entity_ref(Sensor),
+            cv.Required(CONF_GYRO_Z): _entity_ref(Sensor),
+            cv.Optional(CONF_ORIENTATION_X): _entity_ref(Sensor),
+            cv.Optional(CONF_ORIENTATION_Y): _entity_ref(Sensor),
+            cv.Optional(CONF_ORIENTATION_Z): _entity_ref(Sensor),
+            cv.Optional(CONF_ORIENTATION_W): _entity_ref(Sensor),
+        }
+    )
+
+
 def _single_source_schema():
     return cv.Schema(
         {
@@ -262,6 +296,7 @@ def _single_source_schema():
             cv.Optional("camera"): _camera_source_schema(),
             cv.Optional("light"): _light_target_schema(),
             cv.Optional(CONF_ODOM): _odom_source_schema(),
+            cv.Optional(CONF_IMU): _imu_source_schema(),
         }
     )
 
@@ -291,6 +326,9 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
             f"Type {type_} is schema-reserved: codec exists but no "
             "target: entity mapping yet")
     if type_ in TELEMETRY_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is publish-only (no target: entity consumes it)")
+    if type_ in IMU_TYPES:
         raise cv.Invalid(
             f"Type {type_} is publish-only (no target: entity consumes it)")
     if type_ in MULTI_JOINT_TYPES and not has_targets:
@@ -376,11 +414,11 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         if type_ not in MULTI_JOINT_TYPES and has_sources:
             raise cv.Invalid(f"Type {type_} requires source: (singular)")
     if has_source:
-        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light", CONF_ODOM)
+        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light", CONF_ODOM, CONF_IMU)
                  if config[CONF_SOURCE].get(k) is not None]
         if len(kinds) != 1:
             raise cv.Invalid(
-                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:, odom:")
+                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:, odom:, imu:")
         if "sensor" in kinds and type_ not in ("std_msgs/Float32", *TELEMETRY_TYPES):
             raise cv.Invalid(
                 "sensor: sources need std_msgs/Float32, sensor_msgs/Range, "
@@ -401,6 +439,21 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         if type_ == "nav_msgs/Odometry" and CONF_ODOM not in kinds:
             raise cv.Invalid(
                 "nav_msgs/Odometry needs an odom: source (wheel separation)")
+        if CONF_IMU in kinds and type_ != "sensor_msgs/Imu":
+            raise cv.Invalid(
+                f"imu: sources need sensor_msgs/Imu (got {type_})")
+        if type_ == "sensor_msgs/Imu" and CONF_IMU not in kinds:
+            raise cv.Invalid(
+                "sensor_msgs/Imu needs an imu: source "
+                "(accel_x/y/z + gyro_x/y/z, optional orientation_x/y/z/w)")
+    if type_ == "sensor_msgs/Imu" and has_source:
+        imu = config[CONF_SOURCE].get(CONF_IMU, {})
+        orientation_keys = [CONF_ORIENTATION_X, CONF_ORIENTATION_Y,
+                            CONF_ORIENTATION_Z, CONF_ORIENTATION_W]
+        present = [k for k in orientation_keys if imu.get(k) is not None]
+        if present and len(present) != 4:
+            raise cv.Invalid(
+                "imu: orientation needs all of orientation_x/y/z/w or none")
     if type_ == "sensor_msgs/Joy" and has_source:
         raise cv.Invalid("sensor_msgs/Joy is subscribe-only (no source entity produces axes/buttons)")
     if CONF_FRAME_ID in config and type_ not in HEADER_TYPES:
@@ -551,6 +604,26 @@ async def to_code(config: ConfigType) -> None:
                     pub.get(CONF_CHILD_FRAME_ID, "base_link"),
                     pub.get(CONF_TF_TOPIC, ""),
                 ))
+            elif (imu := source.get(CONF_IMU)) is not None:
+                accel_x = await cg.get_variable(imu[CONF_ACCEL_X][CONF_ID])
+                accel_y = await cg.get_variable(imu[CONF_ACCEL_Y][CONF_ID])
+                accel_z = await cg.get_variable(imu[CONF_ACCEL_Z][CONF_ID])
+                gyro_x = await cg.get_variable(imu[CONF_GYRO_X][CONF_ID])
+                gyro_y = await cg.get_variable(imu[CONF_GYRO_Y][CONF_ID])
+                gyro_z = await cg.get_variable(imu[CONF_GYRO_Z][CONF_ID])
+                cg.add(var.add_imu_publication(topic, interval))
+                cg.add(var.set_imu_sources(
+                    topic,
+                    accel_x, accel_y, accel_z,
+                    gyro_x, gyro_y, gyro_z,
+                ))
+                if imu.get(CONF_ORIENTATION_X) is not None:
+                    ori_x = await cg.get_variable(imu[CONF_ORIENTATION_X][CONF_ID])
+                    ori_y = await cg.get_variable(imu[CONF_ORIENTATION_Y][CONF_ID])
+                    ori_z = await cg.get_variable(imu[CONF_ORIENTATION_Z][CONF_ID])
+                    ori_w = await cg.get_variable(imu[CONF_ORIENTATION_W][CONF_ID])
+                    cg.add(var.set_imu_orientation(
+                        topic, ori_x, ori_y, ori_z, ori_w))
         elif type_ == "tf2_msgs/TFMessage":
             cg.add(var.add_tf_publication(topic, interval))
             for entry in pub.get(CONF_TRANSFORMS, []):

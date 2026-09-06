@@ -19,6 +19,7 @@ static const TypeDef K_TYPE_DEFS[] = {
     {"geometry_msgs/Twist", "geometry_msgs__Twist", sizeof(TwistMsg)},
     {"nav_msgs/Odometry", "nav_msgs__Odometry", sizeof(OdometryMsg)},
     {"tf2_msgs/TFMessage", "tf2_msgs__TFMessage", sizeof(TFMessageMsg)},
+    {"sensor_msgs/Imu", "sensor_msgs__Imu", sizeof(ImuMsg)},
     // Variable-length frame buffer; not backed by a fixed struct. Size 0 marks
     // types published straight from the source buffer (see publish_image).
     {"sensor_msgs/CompressedImage", "sensor_msgs__CompressedImage", 0},

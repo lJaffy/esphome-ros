@@ -462,6 +462,74 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
       return true;
     }) && ok;
   }
+  if (strcmp(type->name, "sensor_msgs/Imu") == 0) {
+    if (out_len < sizeof(ImuMsg))
+      return false;
+    auto *msg = static_cast<ImuMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    msg->orientation_covariance[0] = -1.0f;
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      read_header(root, &msg->header);
+      JsonObjectConst ori = root["orientation"].as<JsonObjectConst>();
+      if (!ori.isNull()) {
+        if (ori["x"].is<float>())
+          msg->orientation[0] = ori["x"].as<float>();
+        if (ori["y"].is<float>())
+          msg->orientation[1] = ori["y"].as<float>();
+        if (ori["z"].is<float>())
+          msg->orientation[2] = ori["z"].as<float>();
+        if (ori["w"].is<float>())
+          msg->orientation[3] = ori["w"].as<float>();
+      }
+      JsonArrayConst ori_cov = root["orientation_covariance"].as<JsonArrayConst>();
+      if (!ori_cov.isNull()) {
+        size_t i = 0;
+        for (JsonVariantConst v : ori_cov) {
+          if (i >= 9)
+            break;
+          msg->orientation_covariance[i++] = v.as<float>();
+        }
+      }
+      JsonObjectConst ang = root["angular_velocity"].as<JsonObjectConst>();
+      if (!ang.isNull()) {
+        if (ang["x"].is<float>())
+          msg->angular_velocity[0] = ang["x"].as<float>();
+        if (ang["y"].is<float>())
+          msg->angular_velocity[1] = ang["y"].as<float>();
+        if (ang["z"].is<float>())
+          msg->angular_velocity[2] = ang["z"].as<float>();
+      }
+      JsonArrayConst ang_cov = root["angular_velocity_covariance"].as<JsonArrayConst>();
+      if (!ang_cov.isNull()) {
+        size_t i = 0;
+        for (JsonVariantConst v : ang_cov) {
+          if (i >= 9)
+            break;
+          msg->angular_velocity_covariance[i++] = v.as<float>();
+        }
+      }
+      JsonObjectConst acc = root["linear_acceleration"].as<JsonObjectConst>();
+      if (!acc.isNull()) {
+        if (acc["x"].is<float>())
+          msg->linear_acceleration[0] = acc["x"].as<float>();
+        if (acc["y"].is<float>())
+          msg->linear_acceleration[1] = acc["y"].as<float>();
+        if (acc["z"].is<float>())
+          msg->linear_acceleration[2] = acc["z"].as<float>();
+      }
+      JsonArrayConst acc_cov = root["linear_acceleration_covariance"].as<JsonArrayConst>();
+      if (!acc_cov.isNull()) {
+        size_t i = 0;
+        for (JsonVariantConst v : acc_cov) {
+          if (i >= 9)
+            break;
+          msg->linear_acceleration_covariance[i++] = v.as<float>();
+        }
+      }
+      ok = true;
+      return true;
+    }) && ok;
+  }
   return false;
 }
 
@@ -601,6 +669,35 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
         rot["z"] = t->rotation[2];
         rot["w"] = t->rotation[3];
       }
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "sensor_msgs/Imu") == 0 && len >= sizeof(ImuMsg)) {
+    auto *msg = static_cast<const ImuMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      write_header(root, msg->header);
+      JsonObject ori = root["orientation"].to<JsonObject>();
+      ori["x"] = msg->orientation[0];
+      ori["y"] = msg->orientation[1];
+      ori["z"] = msg->orientation[2];
+      ori["w"] = msg->orientation[3];
+      JsonArray ori_cov = root["orientation_covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 9; i++)
+        ori_cov.add(msg->orientation_covariance[i]);
+      JsonObject ang = root["angular_velocity"].to<JsonObject>();
+      ang["x"] = msg->angular_velocity[0];
+      ang["y"] = msg->angular_velocity[1];
+      ang["z"] = msg->angular_velocity[2];
+      JsonArray ang_cov = root["angular_velocity_covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 9; i++)
+        ang_cov.add(msg->angular_velocity_covariance[i]);
+      JsonObject acc = root["linear_acceleration"].to<JsonObject>();
+      acc["x"] = msg->linear_acceleration[0];
+      acc["y"] = msg->linear_acceleration[1];
+      acc["z"] = msg->linear_acceleration[2];
+      JsonArray acc_cov = root["linear_acceleration_covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 9; i++)
+        acc_cov.add(msg->linear_acceleration_covariance[i]);
     });
     return std::string(buf.c_str(), buf.size());
   }

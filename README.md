@@ -57,6 +57,7 @@ Limits: 16 subscriptions, 16 publications, 16 targets/sources per topic, 16 join
 | `std_msgs/Int32`, `std_msgs/String` | — (rejected: codec-only, no entity mapping yet) | — (rejected) |
 | `sensor_msgs/Range` | — (rejected: publish-only) | `sensor` + geometry opts (`radiation_type`, `field_of_view`, `min_range`, `max_range`, `variance`) |
 | `sensor_msgs/BatteryState` | — (rejected: publish-only) | `sensor` (pack voltage) + `min_voltage`/`max_voltage` map, `design_capacity`, `technology`, `location` |
+| `sensor_msgs/Imu` | — (rejected: publish-only) | `imu` (`accel_x/y/z` + `gyro_x/y/z`, optional `orientation_x/y/z/w`) |
 | `geometry_msgs/Twist` | `diff_drive` (`left:`/`right:` wheel servos + geometry/scales) | — (rejected: subscribe-only) |
 | `nav_msgs/Odometry` | — (rejected: publish-only) | `odom` (`wheel_separation` + `child_frame_id` + optional `tf_topic`) |
 | `tf2_msgs/TFMessage` | — | `transforms:` static list (no `source:`), 1–4 entries |
@@ -121,7 +122,7 @@ ros2:
       source: {camera: {id: sense_camera}}
 ```
 
-Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and all publish-only types as subscriptions (`Joy`, `Range`, `BatteryState`) are rejected at validation, not silently dropped. `frame_id:` is rejected on headerless types; `radiation_type:`/`field_of_view:`/`min_range:`/`max_range:`/`variance:` only with `Range`; `min_voltage:`/`max_voltage:`/`design_capacity:`/`technology:`/`location:` only with `BatteryState` (with `min ≤ max` cross-checks).
+Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and all publish-only types as subscriptions (`Joy`, `Range`, `BatteryState`, `Imu`) are rejected at validation, not silently dropped. `frame_id:` is rejected on headerless types; `radiation_type:`/`field_of_view:`/`min_range:`/`max_range:`/`variance:` only with `Range`; `min_voltage:`/`max_voltage:`/`design_capacity:`/`technology:`/`location:` only with `BatteryState` (with `min ≤ max` cross-checks). `sensor_msgs/Imu` needs an `imu:` source with all six `accel_x/y/z` + `gyro_x/y/z` sensor refs; `orientation_x/y/z/w` must be all present or all absent.
 
 ### Time sync, stamps, and frames
 
@@ -348,9 +349,9 @@ ros2:
 
 Drop to XGA/SVGA if heap degrades at 1 fps.
 
-### 5. `sensor_telemetry.yaml` — Range + BatteryState (ESP32-S3, MQTT)
+### 5. `sensor_telemetry.yaml` — Range + BatteryState + Imu (ESP32-S3, MQTT)
 
-Template sensors stand in for real drivers (`ultrasonic_sensor` in m, `adc` in V); SNTP time stamps all headers:
+Template sensors stand in for real drivers (`ultrasonic_sensor` in m, `adc` in V, `mpu6050` accel in m/s² + gyro in rad/s); SNTP time stamps all headers:
 
 ```yaml
 time:
@@ -379,7 +380,21 @@ ros2:
       technology: lipo
       location: main_pack
       interval: 10s
+    - topic: /imu/data
+      type: sensor_msgs/Imu
+      source:
+        imu:
+          accel_x: {id: imu_accel_x}
+          accel_y: {id: imu_accel_y}
+          accel_z: {id: imu_accel_z}
+          gyro_x: {id: imu_gyro_x}
+          gyro_y: {id: imu_gyro_y}
+          gyro_z: {id: imu_gyro_z}
+      frame_id: imu_link
+      interval: 100ms
 ```
+
+IMU semantics: accel in m/s², gyro in rad/s; skipped until all six axes have state. Orientation is optional (`orientation_x/y/z/w` quaternion sensors, normalized defensively with identity fallback); absent orientation publishes `0,0,0,0` with `orientation_covariance[0] = -1` ("no estimate") per the IDL. All other covariances publish as zeros (no uncertainty model — fuse on the host).
 
 ### 6. `rover_diff_drive.yaml` — cmd_vel rover with odometry + TF (ESP32-S3, XRCE-DDS)
 

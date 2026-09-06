@@ -1099,9 +1099,84 @@ namespace esphome
     {
       if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
       {
-        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned)ROS2_MAX_PUBLICATIONS);
         return 255;
       }
+      const TypeDef *def = find_type("tf2_msgs/TFMessage");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::TF;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+    }
+
+    uint8_t Ros2Component::add_imu_publication(const char *topic, uint32_t interval_ms)
+    {
+#ifndef USE_SENSOR
+      (void) topic;
+      (void) interval_ms;
+      ESP_LOGE(TAG, "sensor support not compiled in");
+      return 255;
+#else
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned)ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("sensor_msgs/Imu");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::IMU;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+#endif
+    }
+
+    void Ros2Component::set_imu_sources(const char *topic, sensor::Sensor *ax, sensor::Sensor *ay,
+                                        sensor::Sensor *az, sensor::Sensor *gx, sensor::Sensor *gy,
+                                        sensor::Sensor *gz)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic && this->pubs_[i].kind == PubKind::IMU)
+        {
+          this->pubs_[i].imu_accel[0] = ax;
+          this->pubs_[i].imu_accel[1] = ay;
+          this->pubs_[i].imu_accel[2] = az;
+          this->pubs_[i].imu_gyro[0] = gx;
+          this->pubs_[i].imu_gyro[1] = gy;
+          this->pubs_[i].imu_gyro[2] = gz;
+        }
+      }
+    }
+
+    void Ros2Component::set_imu_orientation(const char *topic, sensor::Sensor *ox, sensor::Sensor *oy,
+                                            sensor::Sensor *oz, sensor::Sensor *ow)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic && this->pubs_[i].kind == PubKind::IMU)
+        {
+          this->pubs_[i].imu_orientation[0] = ox;
+          this->pubs_[i].imu_orientation[1] = oy;
+          this->pubs_[i].imu_orientation[2] = oz;
+          this->pubs_[i].imu_orientation[3] = ow;
+          this->pubs_[i].imu_has_orientation = true;
+        }
+      }
+    }
       const TypeDef *def = find_type("tf2_msgs/TFMessage");
       if (def == nullptr)
         return 255;
@@ -1286,6 +1361,10 @@ namespace esphome
       {
         this->poll_tf_(pub, opts);
       }
+      else if (strcmp(pub.type->name, "sensor_msgs/Imu") == 0)
+      {
+        this->poll_imu_(pub, opts);
+      }
       else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
       {
 #ifdef USE_LIGHT
@@ -1405,6 +1484,71 @@ namespace esphome
         this->fill_header_(msg.transforms[i].header, pub.tf_transforms[i].header.frame_id);
       }
       this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+    }
+
+    void Ros2Component::poll_imu_(Publication &pub, const MiddlewareOptions &opts)
+    {
+      if (pub.kind != PubKind::IMU)
+        return;
+#ifdef USE_SENSOR
+      // All six accel/gyro axes are required; skip until every axis has
+      // state (mirrors Range/BatteryState). Orientation is optional.
+      for (uint8_t i = 0; i < 3; i++)
+      {
+        if (pub.imu_accel[i] == nullptr || !pub.imu_accel[i]->has_state())
+          return;
+        if (pub.imu_gyro[i] == nullptr || !pub.imu_gyro[i]->has_state())
+          return;
+      }
+      ImuMsg msg;
+      memset(&msg, 0, sizeof(msg));
+      this->fill_header_(msg.header, pub.frame_id);
+      msg.linear_acceleration[0] = pub.imu_accel[0]->state;
+      msg.linear_acceleration[1] = pub.imu_accel[1]->state;
+      msg.linear_acceleration[2] = pub.imu_accel[2]->state;
+      msg.angular_velocity[0] = pub.imu_gyro[0]->state;
+      msg.angular_velocity[1] = pub.imu_gyro[1]->state;
+      msg.angular_velocity[2] = pub.imu_gyro[2]->state;
+      // Covariances unknown: zeros. Orientation without a source publishes
+      // 0,0,0,0 with covariance[0] = -1 ("no estimate") per the IDL.
+      msg.orientation_covariance[0] = -1.0f;
+      bool have_orientation = pub.imu_has_orientation;
+      if (have_orientation)
+      {
+        for (uint8_t i = 0; i < 4; i++)
+        {
+          if (pub.imu_orientation[i] == nullptr || !pub.imu_orientation[i]->has_state())
+          {
+            have_orientation = false;
+            break;
+          }
+        }
+      }
+      if (have_orientation)
+      {
+        float qx = pub.imu_orientation[0]->state;
+        float qy = pub.imu_orientation[1]->state;
+        float qz = pub.imu_orientation[2]->state;
+        float qw = pub.imu_orientation[3]->state;
+        float n = sqrtf(qx * qx + qy * qy + qz * qz + qw * qw);
+        if (n > 0.0f)
+        {
+          msg.orientation[0] = qx / n;
+          msg.orientation[1] = qy / n;
+          msg.orientation[2] = qz / n;
+          msg.orientation[3] = qw / n;
+        }
+        else
+        {
+          msg.orientation[3] = 1.0f;
+        }
+        msg.orientation_covariance[0] = 0.0f;
+      }
+      this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+#else
+      (void) pub;
+      (void) opts;
+#endif
     }
 
   } // namespace ros2

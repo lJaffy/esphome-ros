@@ -52,6 +52,9 @@ EXPECTED_MSG_FIELDS = {
     "geometry_msgs/msg/Transform.msg": ["translation", "rotation"],
     "geometry_msgs/msg/TransformStamped.msg": ["header", "child_frame_id", "transform"],
     "nav_msgs/msg/Odometry.msg": ["header", "child_frame_id", "pose", "twist"],
+    "sensor_msgs/msg/Imu.msg": ["header", "orientation", "orientation_covariance",
+                                "angular_velocity", "angular_velocity_covariance",
+                                "linear_acceleration", "linear_acceleration_covariance"],
     # tf2_msgs lives in ros2/geometry2, not in this submodule: TFMessage
     # (transforms: TransformStamped[]) is covered by members/keys only.
 }
@@ -72,6 +75,8 @@ EXPECTED_WIRE_KEYS = [
     "linear", "angular", "x", "y", "z", "w",
     "child_frame_id", "pose", "twist", "covariance",
     "position", "orientation", "transforms", "transform", "translation", "rotation",
+    "orientation_covariance", "angular_velocity", "angular_velocity_covariance",
+    "linear_acceleration", "linear_acceleration_covariance",
 ]
 
 # Struct members mirroring canonical fields (bounded MCU projection).
@@ -92,6 +97,9 @@ EXPECTED_MEMBERS = [
     "float twist_linear[", "float twist_angular[",
     "char child_frame_id[", "float translation[", "float rotation[",
     "uint8_t num_transforms",
+    "float orientation[", "float orientation_covariance[",
+    "float angular_velocity[", "float angular_velocity_covariance[",
+    "float linear_acceleration[", "float linear_acceleration_covariance[",
 ]
 
 

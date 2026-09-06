@@ -49,6 +49,7 @@ enum class PubKind : uint8_t {
   LIGHT_SINGLE,
   ODOM,
   TF,
+  IMU,
 };
 
 enum class LightField : uint8_t {
@@ -133,6 +134,13 @@ struct Publication {
   // tf2_msgs/TFMessage static transforms.
   TFTransformMsg tf_transforms[ROS2_MAX_TF_TRANSFORMS]{};
   uint8_t num_tf_transforms{0};
+  // sensor_msgs/Imu multi-sensor source: accel + gyro (m/s^2, rad/s),
+  // optional orientation quaternion. Null orientation entries mean
+  // unbound (publish covariances[0] = -1 per the IDL).
+  sensor::Sensor *imu_accel[3]{nullptr};
+  sensor::Sensor *imu_gyro[3]{nullptr};
+  sensor::Sensor *imu_orientation[4]{nullptr};
+  bool imu_has_orientation{false};
 };
 
 class Ros2Component : public Component, public camera::CameraListener {
@@ -168,6 +176,11 @@ class Ros2Component : public Component, public camera::CameraListener {
   uint8_t add_image_publication(const char *topic, const char *type, camera::Camera *camera, uint32_t interval_ms);
   uint8_t add_odom_publication(const char *topic, uint32_t interval_ms);
   uint8_t add_tf_publication(const char *topic, uint32_t interval_ms);
+  uint8_t add_imu_publication(const char *topic, uint32_t interval_ms);
+  void set_imu_sources(const char *topic, sensor::Sensor *ax, sensor::Sensor *ay, sensor::Sensor *az,
+                       sensor::Sensor *gx, sensor::Sensor *gy, sensor::Sensor *gz);
+  void set_imu_orientation(const char *topic, sensor::Sensor *ox, sensor::Sensor *oy, sensor::Sensor *oz,
+                           sensor::Sensor *ow);
   void add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
                         float tx, float ty, float tz, float qx, float qy, float qz, float qw);
   void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
@@ -204,6 +217,7 @@ class Ros2Component : public Component, public camera::CameraListener {
   void poll_publication_(Publication &pub);
   void poll_odom_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
   void poll_tf_(Publication &pub, const MiddlewareOptions &opts);
+  void poll_imu_(Publication &pub, const MiddlewareOptions &opts);
   void publish_tf_transform_(const std::string &topic, const MiddlewareOptions &opts, int32_t sec,
                              const char *frame_id, const char *child_frame_id, float x, float y,
                              float qz, float qw);

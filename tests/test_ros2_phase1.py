@@ -370,6 +370,63 @@ def test_supported_types_cover_motion(ros2):
         assert t in ros2.SUPPORTED_TYPES
 
 
+def _imu_pub(ros2, **kw):
+    base = {"topic": "/imu", "type": "sensor_msgs/Imu",
+            "source": {"imu": {"accel_x": {"id": "ax"}, "accel_y": {"id": "ay"},
+                               "accel_z": {"id": "az"}, "gyro_x": {"id": "gx"},
+                               "gyro_y": {"id": "gy"}, "gyro_z": {"id": "gz"}}}}
+    base.update(kw)
+    return ros2.PUBLICATION_SCHEMA(base)
+
+
+def test_imu_publish_only(ros2):
+    with pytest.raises(Exception):
+        ros2.SUBSCRIPTION_SCHEMA(
+            {"topic": "/imu", "type": "sensor_msgs/Imu",
+             "target": {"switch": {"id": "s"}}}
+        )
+
+
+def test_imu_needs_imu_source(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="sensor_msgs/Imu",
+             source={"sensor": {"id": "s"}})
+
+
+def test_valid_imu_source(ros2):
+    cfg = _imu_pub(ros2, frame_id="imu_link")
+    assert cfg["frame_id"] == "imu_link"
+
+
+def test_imu_orientation_all_or_none(ros2):
+    with pytest.raises(Exception):
+        _imu_pub(ros2, source={"imu": {
+            "accel_x": {"id": "ax"}, "accel_y": {"id": "ay"},
+            "accel_z": {"id": "az"}, "gyro_x": {"id": "gx"},
+            "gyro_y": {"id": "gy"}, "gyro_z": {"id": "gz"},
+            "orientation_x": {"id": "ox"}}})
+    cfg = ros2.PUBLICATION_SCHEMA(
+        {"topic": "/imu", "type": "sensor_msgs/Imu",
+         "source": {"imu": {
+             "accel_x": {"id": "ax"}, "accel_y": {"id": "ay"},
+             "accel_z": {"id": "az"}, "gyro_x": {"id": "gx"},
+             "gyro_y": {"id": "gy"}, "gyro_z": {"id": "gz"},
+             "orientation_x": {"id": "ox"}, "orientation_y": {"id": "oy"},
+             "orientation_z": {"id": "oz"}, "orientation_w": {"id": "ow"}}}}
+    )
+    assert cfg["type"] == "sensor_msgs/Imu"
+
+
+def test_imu_rejects_odom_source(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="sensor_msgs/Imu",
+             source={"odom": {"wheel_separation": 0.2}})
+
+
+def test_supported_types_cover_imu(ros2):
+    assert "sensor_msgs/Imu" in ros2.SUPPORTED_TYPES
+
+
 def test_auto_load_full_without_config(ros2):
     libs = ros2._auto_load()
     for lib in ("json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"):

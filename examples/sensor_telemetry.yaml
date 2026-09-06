@@ -28,7 +28,8 @@ time:
     id: sntp_time
 
 # Swap these templates for real drivers (ultrasonic_sensor in m,
-# adc in V). Publications are skipped until the sensor has state.
+# adc in V, mpu6050 accel in m/s^2 + gyro in rad/s).
+# Publications are skipped until the sensor has state.
 sensor:
   - platform: template
     id: sonar_distance
@@ -38,6 +39,30 @@ sensor:
     id: pack_voltage
     name: Pack Voltage
     unit_of_measurement: V
+  - platform: template
+    id: imu_accel_x
+    name: IMU Accel X
+    unit_of_measurement: m/s²
+  - platform: template
+    id: imu_accel_y
+    name: IMU Accel Y
+    unit_of_measurement: m/s²
+  - platform: template
+    id: imu_accel_z
+    name: IMU Accel Z
+    unit_of_measurement: m/s²
+  - platform: template
+    id: imu_gyro_x
+    name: IMU Gyro X
+    unit_of_measurement: rad/s
+  - platform: template
+    id: imu_gyro_y
+    name: IMU Gyro Y
+    unit_of_measurement: rad/s
+  - platform: template
+    id: imu_gyro_z
+    name: IMU Gyro Z
+    unit_of_measurement: rad/s
 
 ros2:
   middleware: mqtt
@@ -67,3 +92,20 @@ ros2:
       technology: lipo
       location: main_pack
       interval: 10s
+    - topic: /imu/data
+      type: sensor_msgs/Imu
+      source:
+        imu:
+          accel_x: {id: imu_accel_x}
+          accel_y: {id: imu_accel_y}
+          accel_z: {id: imu_accel_z}
+          gyro_x: {id: imu_gyro_x}
+          gyro_y: {id: imu_gyro_y}
+          gyro_z: {id: imu_gyro_z}
+          # optional orientation_x/y/z/w (quaternion sensors):
+          # normalized defensively; absent publishes covariance[0] = -1
+      frame_id: imu_link
+      interval: 100ms
+
+# Verify from the ROS side:
+#   ros2 topic echo /imu/data

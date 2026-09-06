@@ -55,9 +55,12 @@ Scope: `ros2/__init__.py`, `ros2_types.h/.cpp`, `ros2_json.cpp`, `xrce_dds_codec
 - Exit: `pytest tests/ -v` green, `esphome config` on all 6 examples green, RViz
   TF-validated (`ros2 topic echo /odom`, `tf2_echo odom base_link`).
 
-## Phase 1c — IMU (next, small)
-- `sensor_msgs/Imu` publish → multi-sensor source (accel/gyro refs, optional orientation,
+## Phase 1c — IMU (done)
+- `sensor_msgs/Imu` publish → multi-sensor `imu:` source (`accel_x/y/z` +
+  `gyro_x/y/z` required, `orientation_x/y/z/w` all-or-none optional,
   covariance -1/zero conventions).
+- Exit: `pytest tests/ -v` green, `esphome config` on all 6 examples green,
+  `ros2 topic echo /imu/data`.
 
 ## Phase 2 — Concurrency foundation (no new ROS features)
 Scope: `xrce_dds_component.h/cpp` (worker owns all `uxr_*`); `ros2_component.cpp` only gains queue drain.

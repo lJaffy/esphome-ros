@@ -179,6 +179,8 @@ const char *dds_type_suffix(const char *ros_name) {
     return "nav_msgs::msg::dds_::Odometry_";
   if (strcmp(ros_name, "tf2_msgs/TFMessage") == 0)
     return "tf2_msgs::msg::dds_::TFMessage_";
+  if (strcmp(ros_name, "sensor_msgs/Imu") == 0)
+    return "sensor_msgs::msg::dds_::Imu_";
   if (strcmp(ros_name, "sensor_msgs/CompressedImage") == 0)
     return "sensor_msgs::msg::dds_::CompressedImage_";
   return "";
@@ -295,6 +297,16 @@ uint32_t XcdrCodec::size_of(const ros2::TypeDef *type, const void *sample, size_
       size = f64_vec_size(size, 3);  // translation
       size = f64_vec_size(size, 4);  // rotation
     }
+    return size;
+  }
+  if (strcmp(type->name, "sensor_msgs/Imu") == 0 && len >= sizeof(ros2::ImuMsg)) {
+    size = header_size(0, &static_cast<const ros2::ImuMsg *>(sample)->header);
+    size = f64_vec_size(size, 4);  // orientation
+    size = f64_vec_size(size, 9);  // orientation_covariance
+    size = f64_vec_size(size, 3);  // angular_velocity
+    size = f64_vec_size(size, 9);  // angular_velocity_covariance
+    size = f64_vec_size(size, 3);  // linear_acceleration
+    size = f64_vec_size(size, 9);  // linear_acceleration_covariance
     return size;
   }
   return 0;
@@ -427,6 +439,24 @@ bool XcdrCodec::serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void 
         return false;
     }
     return true;
+  }
+  if (strcmp(type->name, "sensor_msgs/Imu") == 0 && len >= sizeof(ros2::ImuMsg)) {
+    auto *msg = static_cast<const ros2::ImuMsg *>(sample);
+    if (!ser_header(ub, &msg->header))
+      return false;
+    // NaN floats (unused axes read as absent) go out as NaN doubles;
+    // orientation_covariance[0] = -1 marks "no orientation estimate".
+    if (!ser_f64_vec(ub, msg->orientation, 4))
+      return false;
+    if (!ser_f64_vec(ub, msg->orientation_covariance, 9))
+      return false;
+    if (!ser_f64_vec(ub, msg->angular_velocity, 3))
+      return false;
+    if (!ser_f64_vec(ub, msg->angular_velocity_covariance, 9))
+      return false;
+    if (!ser_f64_vec(ub, msg->linear_acceleration, 3))
+      return false;
+    return ser_f64_vec(ub, msg->linear_acceleration_covariance, 9);
   }
   return false;
 }
@@ -601,6 +631,23 @@ bool XcdrCodec::deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out
         return false;
     }
     return true;
+  }
+  if (strcmp(type->name, "sensor_msgs/Imu") == 0 && out_len >= sizeof(ros2::ImuMsg)) {
+    auto *msg = static_cast<ros2::ImuMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_header(ub, &msg->header))
+      return false;
+    if (!de_f64_vec(ub, msg->orientation, 4))
+      return false;
+    if (!de_f64_vec(ub, msg->orientation_covariance, 9))
+      return false;
+    if (!de_f64_vec(ub, msg->angular_velocity, 3))
+      return false;
+    if (!de_f64_vec(ub, msg->angular_velocity_covariance, 9))
+      return false;
+    if (!de_f64_vec(ub, msg->linear_acceleration, 3))
+      return false;
+    return de_f64_vec(ub, msg->linear_acceleration_covariance, 9);
   }
   return false;
 }

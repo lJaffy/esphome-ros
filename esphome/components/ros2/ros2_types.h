@@ -165,6 +165,21 @@ namespace esphome
       TFTransformMsg transforms[ROS2_MAX_TF_TRANSFORMS]{};
     };
 
+    // MCU projection of sensor_msgs/Imu. Covariances are float[9] here,
+    // float64[9] on the wire. Conventions per the IDL: all-zeros means
+    // "covariance unknown"; element 0 = -1 means "no estimate for this
+    // element" (used for orientation when no orientation source is bound).
+    struct ImuMsg
+    {
+      HeaderMsg header;
+      float orientation[4]{0.0f};
+      float orientation_covariance[9]{0.0f};
+      float angular_velocity[3]{0.0f};
+      float angular_velocity_covariance[9]{0.0f};
+      float linear_acceleration[3]{0.0f};
+      float linear_acceleration_covariance[9]{0.0f};
+    };
+
     const TypeDef *find_type(const char *name);
     bool is_multi_joint_type(const TypeDef *type);
 
