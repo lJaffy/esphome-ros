@@ -42,13 +42,22 @@ Scope: `ros2/__init__.py`, `ros2_types.h/.cpp`, `ros2_json.cpp`, `xrce_dds_codec
   age in `dump_config`; blackhole-agent gap still open (needs Phase 2 worker + ping design).
 - Exit: `pytest tests/ -v` green, `esphome config` on all 5 examples green.
 
-## Phase 1b — rover stack: Twist, Odometry, TF (next)
-- `geometry_msgs/Twist` subscribe → diff-drive target (left/right servos + wheel separation +
-  speed scales; open-loop velocity documented).
-- `nav_msgs/Odometry` publish → dead-reckoning integrator (commanded-velocity based, `frame_id`/
-  `child_frame_id` opts) + `tf2_msgs/TFMessage` (static transforms + odom→base_link bundling).
-- `sensor_msgs/Imu` publish → multi-sensor source (accel/gyro refs).
-- Exit: RViz TF-validated rover (`cmd_vel` in, `odom`+TF out).
+## Phase 1b — rover stack: Twist, Odometry, TF (done)
+- `geometry_msgs/Twist` subscribe → `diff_drive:` target (left/right velocity servos,
+  required `wheel_separation`, speed scales, `cmd_timeout` safety stop; planar only).
+- `nav_msgs/Odometry` publish → open-loop dead reckoning from last commanded velocity
+  (stale = zero, `dt` clamped, covariances zero) + `tf_topic:` bundling of odom→base_link.
+- `tf2_msgs/TFMessage` publish → static `transforms:` list (1–4, quaternions normalized
+  defensively); shares `/tf` with bundled odom frames. tf2_msgs has no IDL in the
+  common_interfaces submodule (ros2/geometry2), so parity covers members/keys only.
+- Large-sample fragmented DDS writes (Odometry ~716 B > 512 B history slot), best-effort
+  streams keep whole-buffer writes.
+- Exit: `pytest tests/ -v` green, `esphome config` on all 6 examples green, RViz
+  TF-validated (`ros2 topic echo /odom`, `tf2_echo odom base_link`).
+
+## Phase 1c — IMU (next, small)
+- `sensor_msgs/Imu` publish → multi-sensor source (accel/gyro refs, optional orientation,
+  covariance -1/zero conventions).
 
 ## Phase 2 — Concurrency foundation (no new ROS features)
 Scope: `xrce_dds_component.h/cpp` (worker owns all `uxr_*`); `ros2_component.cpp` only gains queue drain.

@@ -57,6 +57,9 @@ Limits: 16 subscriptions, 16 publications, 16 targets/sources per topic, 16 join
 | `std_msgs/Int32`, `std_msgs/String` | — (rejected: codec-only, no entity mapping yet) | — (rejected) |
 | `sensor_msgs/Range` | — (rejected: publish-only) | `sensor` + geometry opts (`radiation_type`, `field_of_view`, `min_range`, `max_range`, `variance`) |
 | `sensor_msgs/BatteryState` | — (rejected: publish-only) | `sensor` (pack voltage) + `min_voltage`/`max_voltage` map, `design_capacity`, `technology`, `location` |
+| `geometry_msgs/Twist` | `diff_drive` (`left:`/`right:` wheel servos + geometry/scales) | — (rejected: subscribe-only) |
+| `nav_msgs/Odometry` | — (rejected: publish-only) | `odom` (`wheel_separation` + `child_frame_id` + optional `tf_topic`) |
+| `tf2_msgs/TFMessage` | — | `transforms:` static list (no `source:`), 1–4 entries |
 | `sensor_msgs/JointState`, `trajectory_msgs/JointTrajectory` | `targets: [servo + joint_name]` | `sources: [servo + joint_name]` (trajectory uses `points[0]`) |
 | `std_msgs/ColorRGBA` | `light (field: rgb\|brightness)` | `light` |
 | `sensor_msgs/Joy` | `light (field: rgb)` — subscribe-only | — (rejected) |
@@ -202,7 +205,7 @@ Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4. `max_topics
 
 ## Examples
 
-All under `examples/` (run `esphome compile <file>` or Dashboard).
+All under `examples/` (run `esphome compile <file>` or Dashboard). Six demos: gamepad lamp, Stewart ×2, camera, telemetry, rover.
 
 ### 1. `joy_color_light.yaml` — gamepad RGB lamp (ESP32-S3, MQTT)
 
@@ -378,6 +381,46 @@ ros2:
       interval: 10s
 ```
 
+### 6. `rover_diff_drive.yaml` — cmd_vel rover with odometry + TF (ESP32-S3, XRCE-DDS)
+
+Two continuous-rotation servos as wheel velocity outputs (`level -1..1` = reverse..forward):
+
+```yaml
+ros2:
+  middleware: xrce_dds
+  time_id: sntp_time
+  subscriptions:
+    - topic: /cmd_vel
+      type: geometry_msgs/Twist
+      target:
+        diff_drive:
+          left: {id: left_wheel}
+          right: {id: right_wheel}
+          wheel_separation: 0.2   # required, no default: silent geometry is worse than none
+          max_linear_speed: 0.5
+          max_angular_speed: 2.0
+          cmd_timeout: 500ms      # stale cmd_vel zeroes the wheels (safety stop)
+  publications:
+    - topic: /odom
+      type: nav_msgs/Odometry
+      source:
+        odom: {wheel_separation: 0.2}  # required, must match the base above
+      frame_id: odom
+      child_frame_id: base_link
+      tf_topic: /tf               # also publish odom→base_link here (shares /tf with static below)
+      interval: 100ms
+    - topic: /tf
+      type: tf2_msgs/TFMessage
+      transforms:
+        - frame_id: base_link
+          child_frame_id: laser
+          translation: [0.1, 0.0, 0.2]
+          rotation: [0.0, 0.0, 0.0, 1.0]  # normalized defensively at runtime
+      interval: 1s
+```
+
+Semantics, all documented limitations: planar only (`linear.y/z`, `angular.x/y` ignored); odometry is open-loop dead reckoning from the last commanded wheel velocity (integrates zero when `cmd_vel` goes stale — a silent base reads stopped, never drifting); covariances publish as zeros (no uncertainty model — fuse on the host for anything serious); `dt` clamps to 1 s across sleeps/reconnects. Verify with `ros2 topic echo /odom` and `ros2 run tf2_ros tf2_echo odom base_link`.
+
 ## Middleware choice
 
 |  | `ros2_mqtt` | `xrce_dds` |
@@ -402,7 +445,7 @@ python -m pytest tests/
 esphome/components/ros2/       # __init__.py, ros2_component.{h,cpp}, ros2_{types,json,middleware}.{h,cpp}
 esphome/components/ros2_mqtt/  # __init__.py, ros2_mqtt.{h,cpp}
 esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}
-examples/*.yaml                # 5 demos above
+examples/*.yaml                # 6 demos above
 tests/*.py                     # 3 pytest files
 third_party/common_interfaces  # submodule, canonical .msg
 ```

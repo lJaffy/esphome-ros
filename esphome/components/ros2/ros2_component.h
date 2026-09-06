@@ -37,6 +37,7 @@ enum class SubKind : uint8_t {
   SWITCH_SINGLE,
   JOINT_MULTI,
   LIGHT_SINGLE,
+  DIFF_DRIVE,
 };
 
 enum class PubKind : uint8_t {
@@ -46,6 +47,8 @@ enum class PubKind : uint8_t {
   JOINT_MULTI,
   IMAGE_SINGLE,
   LIGHT_SINGLE,
+  ODOM,
+  TF,
 };
 
 enum class LightField : uint8_t {
@@ -74,6 +77,13 @@ struct Subscription {
   size_t num_joints{0};
   bool reliable{true};
   bool qos_explicit{false};
+  // Diff-drive (planar) parameters; wheels are velocity-driven servos.
+  servo::Servo *left_wheel{nullptr};
+  servo::Servo *right_wheel{nullptr};
+  float wheel_separation{0.2f};
+  float max_linear_speed{0.5f};
+  float max_angular_speed{2.0f};
+  uint32_t cmd_timeout_ms{500};
 };
 
 struct JointSource {
@@ -112,6 +122,17 @@ struct Publication {
   float design_capacity{0.0f};
   uint8_t battery_technology{0};
   char battery_location[ROS2_NAME_LEN]{0};
+  // nav_msgs/Odometry dead-reckoning state (open-loop, commanded velocity).
+  char child_frame_id[ROS2_FRAME_ID_LEN]{0};
+  float odom_wheel_separation{0.2f};
+  std::string tf_topic;
+  float odom_x{0.0f};
+  float odom_y{0.0f};
+  float odom_theta{0.0f};
+  uint32_t odom_last_ms{0};
+  // tf2_msgs/TFMessage static transforms.
+  TFTransformMsg tf_transforms[ROS2_MAX_TF_TRANSFORMS]{};
+  uint8_t num_tf_transforms{0};
 };
 
 class Ros2Component : public Component, public camera::CameraListener {
@@ -133,6 +154,9 @@ class Ros2Component : public Component, public camera::CameraListener {
   void add_joint_state_source(servo::Servo *servo, const char *joint_name, float min_rad, float max_rad);
   void add_switch_subscription(const char *topic, const char *type, switch_::Switch *sw);
   void add_light_subscription(const char *topic, const char *type, light::LightState *light, const char *field);
+  void add_diff_drive_subscription(const char *topic, servo::Servo *left, servo::Servo *right,
+                                   float wheel_separation, float max_linear_speed,
+                                   float max_angular_speed, uint32_t cmd_timeout_ms);
   uint8_t add_light_publication(const char *topic, const char *type, light::LightState *light, uint32_t interval_ms);
   uint8_t add_switch_publication(const char *topic, const char *type, switch_::Switch *sw, uint32_t interval_ms);
   uint8_t add_sensor_publication(const char *topic, const char *type, sensor::Sensor *sensor, uint32_t interval_ms);
@@ -142,6 +166,10 @@ class Ros2Component : public Component, public camera::CameraListener {
                                         uint32_t interval_ms);
   uint8_t add_joint_state_publication(const char *topic, const char *type, uint32_t interval_ms);
   uint8_t add_image_publication(const char *topic, const char *type, camera::Camera *camera, uint32_t interval_ms);
+  uint8_t add_odom_publication(const char *topic, uint32_t interval_ms);
+  uint8_t add_tf_publication(const char *topic, uint32_t interval_ms);
+  void add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
+                        float tx, float ty, float tz, float qx, float qy, float qz, float qw);
   void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
   // Post-hoc per-topic configuration from codegen (keeps add_* signatures
   // stable across single- and multi-entity topics).
@@ -152,6 +180,8 @@ class Ros2Component : public Component, public camera::CameraListener {
                         float max_range, float variance);
   void set_battery_params(const char *topic, float min_voltage, float max_voltage, float design_capacity,
                           uint8_t technology, const char *location);
+  void set_odom_params(const char *topic, float wheel_separation, const char *child_frame_id,
+                       const char *tf_topic);
 
  protected:
   void try_subscribe_();
@@ -164,6 +194,7 @@ class Ros2Component : public Component, public camera::CameraListener {
   void dispatch_scalar_servo_(const Subscription &sub, const void *sample);
   void dispatch_joints_(const Subscription &sub, const void *sample);
   void dispatch_light_(const Subscription &sub, const void *sample);
+  void dispatch_diff_drive_(const Subscription &sub, const void *sample);
   static float clamp01_(float v);
   static LightField parse_light_field_(const char *field);
   static float rad_to_level_(float rad, float min_rad, float max_rad);
@@ -171,10 +202,23 @@ class Ros2Component : public Component, public camera::CameraListener {
   void remember_level_(servo::Servo *servo, float level);
   float recalled_level_(servo::Servo *servo);
   void poll_publication_(Publication &pub);
+  void poll_odom_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
+  void poll_tf_(Publication &pub, const MiddlewareOptions &opts);
+  void publish_tf_transform_(const std::string &topic, const MiddlewareOptions &opts, int32_t sec,
+                             const char *frame_id, const char *child_frame_id, float x, float y,
+                             float qz, float qw);
+  // Zero stale wheel commands (cmd_vel timeout). Runs on loop(), not hot path.
+  void stop_stale_diff_drive_(uint32_t now);
 
   std::string middleware_name_{"mqtt"};
   Ros2Middleware *mw_{nullptr};
   time::RealTimeClock *time_{nullptr};
+  // Last commanded planar velocity (single diff-drive base per MCU).
+  float cmd_vl_{0.0f};
+  float cmd_vr_{0.0f};
+  uint32_t cmd_time_{0};
+  uint32_t cmd_timeout_ms_{500};
+  bool cmd_active_{false};
   bool subscribed_{false};
   uint32_t mw_retry_at_{0};
   std::array<Subscription, ROS2_MAX_SUBSCRIPTIONS> subs_{};

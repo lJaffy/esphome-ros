@@ -27,6 +27,9 @@ constexpr size_t XRCE_MAX_READERS = 8;
 constexpr size_t XRCE_MAX_WRITERS = 8;
 constexpr size_t XRCE_STREAM_BUF_SIZE = 2048;
 constexpr uint16_t XRCE_STREAM_HISTORY = 4;
+// One history slot: samples larger than this (e.g. Odometry with zeroed
+// covariances) go out via the fragmented write path instead.
+constexpr size_t XRCE_STREAM_BLOCK = XRCE_STREAM_BUF_SIZE / XRCE_STREAM_HISTORY;
 constexpr size_t XRCE_TOPIC_NAME_LEN = 96;
 constexpr size_t XRCE_XML_BUF_LEN = 384;
 

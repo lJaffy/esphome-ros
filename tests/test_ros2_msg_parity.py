@@ -42,6 +42,18 @@ EXPECTED_MSG_FIELDS = {
         "percentage", "power_supply_status", "power_supply_health", "power_supply_technology",
         "present", "cell_voltage", "cell_temperature", "location", "serial_number",
     ],
+    "geometry_msgs/msg/Twist.msg": ["linear", "angular"],
+    "geometry_msgs/msg/Vector3.msg": ["x", "y", "z"],
+    "geometry_msgs/msg/Quaternion.msg": ["x", "y", "z", "w"],
+    "geometry_msgs/msg/Point.msg": ["x", "y", "z"],
+    "geometry_msgs/msg/Pose.msg": ["position", "orientation"],
+    "geometry_msgs/msg/PoseWithCovariance.msg": ["pose", "covariance"],
+    "geometry_msgs/msg/TwistWithCovariance.msg": ["twist", "covariance"],
+    "geometry_msgs/msg/Transform.msg": ["translation", "rotation"],
+    "geometry_msgs/msg/TransformStamped.msg": ["header", "child_frame_id", "transform"],
+    "nav_msgs/msg/Odometry.msg": ["header", "child_frame_id", "pose", "twist"],
+    # tf2_msgs lives in ros2/geometry2, not in this submodule: TFMessage
+    # (transforms: TransformStamped[]) is covered by members/keys only.
 }
 
 # JSON keys the bridge must handle, per canonical field names above.
@@ -57,6 +69,9 @@ EXPECTED_WIRE_KEYS = [
     "voltage", "temperature", "current", "charge", "capacity", "design_capacity",
     "percentage", "power_supply_status", "power_supply_health", "power_supply_technology",
     "present", "location",
+    "linear", "angular", "x", "y", "z", "w",
+    "child_frame_id", "pose", "twist", "covariance",
+    "position", "orientation", "transforms", "transform", "translation", "rotation",
 ]
 
 # Struct members mirroring canonical fields (bounded MCU projection).
@@ -72,6 +87,11 @@ EXPECTED_MEMBERS = [
     "float design_capacity{", "float percentage{",
     "uint8_t power_supply_status", "uint8_t power_supply_health", "uint8_t power_supply_technology",
     "bool present", "char location[",
+    "float linear_x", "float angular_x",
+    "float pose_position[", "float pose_orientation[",
+    "float twist_linear[", "float twist_angular[",
+    "char child_frame_id[", "float translation[", "float rotation[",
+    "uint8_t num_transforms",
 ]
 
 

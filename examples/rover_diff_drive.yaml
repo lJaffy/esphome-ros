@@ -1,0 +1,83 @@
+esphome:
+  name: rover-diff-drive
+  friendly_name: Rover Diff Drive
+
+esp32:
+  board: esp32-s3-devkitc-1
+
+logger:
+
+api:
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+# Continuous-rotation servos (or DC drivers) as wheel velocity outputs:
+# level -1..1 maps to reverse..forward speed.
+output:
+  - platform: ledc
+    id: left_pwm
+    pin: GPIO4
+  - platform: ledc
+    id: right_pwm
+    pin: GPIO5
+
+servo:
+  - id: left_wheel
+    output: left_pwm
+  - id: right_wheel
+    output: right_pwm
+
+xrce_dds:
+  agent_address: 192.168.1.10
+  agent_port: 8888
+  transport:
+    type: udp
+  domain_id: 0
+  client_name: rover
+
+ros2:
+  middleware: xrce_dds
+  time_id: sntp_time
+  subscriptions:
+    - topic: /cmd_vel
+      type: geometry_msgs/Twist
+      target:
+        diff_drive:
+          left: {id: left_wheel}
+          right: {id: right_wheel}
+          wheel_separation: 0.2
+          max_linear_speed: 0.5
+          max_angular_speed: 2.0
+          cmd_timeout: 500ms
+  publications:
+    - topic: /odom
+      type: nav_msgs/Odometry
+      source:
+        odom: {wheel_separation: 0.2}
+      frame_id: odom
+      child_frame_id: base_link
+      tf_topic: /tf
+      interval: 100ms
+    - topic: /tf
+      type: tf2_msgs/TFMessage
+      transforms:
+        - frame_id: base_link
+          child_frame_id: laser
+          translation: [0.1, 0.0, 0.2]
+          rotation: [0.0, 0.0, 0.0, 1.0]
+      interval: 1s
+
+# Verify from the ROS side:
+#   ros2 topic echo /odom
+#   ros2 run tf2_ros tf2_echo odom base_link

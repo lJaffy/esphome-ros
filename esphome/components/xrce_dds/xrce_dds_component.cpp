@@ -553,8 +553,18 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
   }
   uxrStreamId out = w->reliable ? this->out_stream_ : this->out_be_stream_;
   ucdrBuffer ub;
-  if (uxr_prepare_output_stream(&this->session_, out, w->writer_id, &ub, size) ==
-      UXR_INVALID_REQUEST_ID) {
+  bool prepared;
+  if (size > XRCE_STREAM_BLOCK && w->reliable) {
+    // Large sample (e.g. Odometry): fragment across reliable stream windows,
+    // pumping without blocking like the image path. Best-effort streams have
+    // no history split, so the whole buffer fits the sample directly.
+    prepared = uxr_prepare_output_stream_fragmented(&this->session_, out, w->writer_id, &ub, size,
+                                                    image_flush, this) != UXR_INVALID_REQUEST_ID;
+  } else {
+    prepared = uxr_prepare_output_stream(&this->session_, out, w->writer_id, &ub, size) !=
+               UXR_INVALID_REQUEST_ID;
+  }
+  if (!prepared) {
     this->tx_fail_++;
     return false;
   }

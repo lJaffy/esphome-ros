@@ -161,6 +161,10 @@ namespace esphome
               {
                 this->dispatch_light_(s, p);
               }
+              else if (s.kind == SubKind::DIFF_DRIVE)
+              {
+                this->dispatch_diff_drive_(s, p);
+              }
             },
             &opts);
         ESP_LOGI(TAG, "Subscribed: %s (%s)", sub.topic.c_str(), sub.type->name);
@@ -172,9 +176,9 @@ namespace esphome
     {
       this->try_subscribe_();
       const uint32_t now = App.get_loop_component_start_time();
+      this->stop_stale_diff_drive_(now);
       for (size_t i = 0; i < this->num_pubs_; i++)
         this->poll_publication_(this->pubs_[i]);
-      (void)now;
 #ifdef USE_BINARY_SENSOR
       if (this->status_sensor_ != nullptr && this->mw_ != nullptr)
         this->status_sensor_->publish_state(this->mw_->connected());
@@ -316,8 +320,7 @@ namespace esphome
       return LightField::RGB;
     }
 
-    void Ros2Component::dispatch_joints_(const Subscription &sub, const void *sample)
-    {
+    void Ros2Component::dispatch_joints_(const Subscription &sub, const void *sample)    {
 #ifdef USE_SERVO
       if (sub.type == nullptr)
         return;
@@ -369,6 +372,75 @@ namespace esphome
 #else
       (void)sub;
       (void)sample;
+#endif
+    }
+
+    void Ros2Component::dispatch_diff_drive_(const Subscription &sub, const void *sample)
+    {
+#ifdef USE_SERVO
+      if (sub.type == nullptr || strcmp(sub.type->name, "geometry_msgs/Twist") != 0)
+        return;
+      if (sub.left_wheel == nullptr || sub.right_wheel == nullptr)
+        return;
+      auto *msg = static_cast<const TwistMsg *>(sample);
+      // Planar only: linear.y/z and angular.x/y are ignored by design.
+      float v = msg->linear_x;
+      if (v > sub.max_linear_speed)
+        v = sub.max_linear_speed;
+      if (v < -sub.max_linear_speed)
+        v = -sub.max_linear_speed;
+      float w = msg->angular_z;
+      if (w > sub.max_angular_speed)
+        w = sub.max_angular_speed;
+      if (w < -sub.max_angular_speed)
+        w = -sub.max_angular_speed;
+      const float vl = v - w * sub.wheel_separation * 0.5f;
+      const float vr = v + w * sub.wheel_separation * 0.5f;
+      float scale = sub.max_linear_speed + sub.max_angular_speed * sub.wheel_separation * 0.5f;
+      if (scale <= 0.0f)
+        scale = 1.0f;
+      float ll = vl / scale;
+      float rl = vr / scale;
+      if (ll > 1.0f)
+        ll = 1.0f;
+      if (ll < -1.0f)
+        ll = -1.0f;
+      if (rl > 1.0f)
+        rl = 1.0f;
+      if (rl < -1.0f)
+        rl = -1.0f;
+      sub.left_wheel->write(ll);
+      sub.right_wheel->write(rl);
+      this->cmd_vl_ = vl;
+      this->cmd_vr_ = vr;
+      this->cmd_time_ = App.get_loop_component_start_time();
+      this->cmd_timeout_ms_ = sub.cmd_timeout_ms;
+      this->cmd_active_ = true;
+#else
+      (void) sub;
+      (void) sample;
+#endif
+    }
+
+    void Ros2Component::stop_stale_diff_drive_(uint32_t now)
+    {
+#ifdef USE_SERVO
+      if (!this->cmd_active_ || now - this->cmd_time_ < this->cmd_timeout_ms_)
+        return;
+      this->cmd_active_ = false;
+      this->cmd_vl_ = 0.0f;
+      this->cmd_vr_ = 0.0f;
+      for (size_t i = 0; i < this->num_subs_; i++)
+      {
+        if (this->subs_[i].kind != SubKind::DIFF_DRIVE)
+          continue;
+        if (this->subs_[i].left_wheel != nullptr)
+          this->subs_[i].left_wheel->write(0.0f);
+        if (this->subs_[i].right_wheel != nullptr)
+          this->subs_[i].right_wheel->write(0.0f);
+      }
+#else
+      (void) now;
 #endif
     }
 
@@ -732,8 +804,49 @@ namespace esphome
 #endif
     }
 
+    void Ros2Component::add_diff_drive_subscription(const char *topic, servo::Servo *left, servo::Servo *right,
+                                                     float wheel_separation, float max_linear_speed,
+                                                     float max_angular_speed, uint32_t cmd_timeout_ms)
+    {
+#ifdef USE_SERVO
+      if (this->num_subs_ >= ROS2_MAX_SUBSCRIPTIONS)
+      {
+        ESP_LOGE(TAG, "Too many subscriptions (max %u)", (unsigned) ROS2_MAX_SUBSCRIPTIONS);
+        return;
+      }
+      const TypeDef *def = find_type("geometry_msgs/Twist");
+      if (def == nullptr)
+        return;
+      if (left == nullptr || right == nullptr)
+      {
+        ESP_LOGE(TAG, "Diff-drive needs left: and right: servos for %s", topic);
+        return;
+      }
+      Subscription sub;
+      sub.topic = topic;
+      sub.type = def;
+      sub.kind = SubKind::DIFF_DRIVE;
+      sub.left_wheel = left;
+      sub.right_wheel = right;
+      sub.wheel_separation = wheel_separation;
+      sub.max_linear_speed = max_linear_speed;
+      sub.max_angular_speed = max_angular_speed;
+      sub.cmd_timeout_ms = cmd_timeout_ms != 0 ? cmd_timeout_ms : 500;
+      this->subs_[this->num_subs_++] = sub;
+#else
+      (void) topic;
+      (void) left;
+      (void) right;
+      (void) wheel_separation;
+      (void) max_linear_speed;
+      (void) max_angular_speed;
+      (void) cmd_timeout_ms;
+      ESP_LOGE(TAG, "servo support not compiled in");
+#endif
+    }
+
     uint8_t Ros2Component::add_light_publication(const char *topic, const char *type, light::LightState *light,
-                                                 uint32_t interval_ms)
+                                                  uint32_t interval_ms)
     {
 #ifdef USE_LIGHT
       if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
@@ -941,6 +1054,115 @@ namespace esphome
 #endif
     }
 
+    void Ros2Component::set_odom_params(const char *topic, float wheel_separation,
+                                        const char *child_frame_id, const char *tf_topic)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+        {
+          this->pubs_[i].odom_wheel_separation = wheel_separation;
+          if (child_frame_id != nullptr)
+          {
+            strncpy(this->pubs_[i].child_frame_id, child_frame_id, ROS2_FRAME_ID_LEN - 1);
+            this->pubs_[i].child_frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+          }
+          if (tf_topic != nullptr)
+            this->pubs_[i].tf_topic = tf_topic;
+        }
+      }
+    }
+
+    uint8_t Ros2Component::add_odom_publication(const char *topic, uint32_t interval_ms)
+    {
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("nav_msgs/Odometry");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::ODOM;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      strncpy(pub.child_frame_id, "base_link", ROS2_FRAME_ID_LEN - 1);
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+    }
+
+    uint8_t Ros2Component::add_tf_publication(const char *topic, uint32_t interval_ms)
+    {
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("tf2_msgs/TFMessage");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::TF;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+    }
+
+    void Ros2Component::add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
+                                         float tx, float ty, float tz, float qx, float qy, float qz,
+                                         float qw)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        Publication &pub = this->pubs_[i];
+        if (pub.topic != topic || pub.kind != PubKind::TF)
+          continue;
+        if (pub.num_tf_transforms >= ROS2_MAX_TF_TRANSFORMS)
+        {
+          ESP_LOGE(TAG, "Too many transforms for %s (max %u)", topic,
+                   (unsigned) ROS2_MAX_TF_TRANSFORMS);
+          return;
+        }
+        TFTransformMsg &t = pub.tf_transforms[pub.num_tf_transforms++];
+        memset(&t, 0, sizeof(t));
+        if (frame_id != nullptr)
+        {
+          strncpy(t.header.frame_id, frame_id, ROS2_FRAME_ID_LEN - 1);
+          t.header.frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+        }
+        if (child_frame_id != nullptr)
+        {
+          strncpy(t.child_frame_id, child_frame_id, ROS2_FRAME_ID_LEN - 1);
+          t.child_frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+        }
+        t.translation[0] = tx;
+        t.translation[1] = ty;
+        t.translation[2] = tz;
+        // Normalize defensively: a non-unit user quaternion would silently
+        // corrupt every downstream TF lookup.
+        float n = sqrtf(qx * qx + qy * qy + qz * qz + qw * qw);
+        if (n > 0.0f)
+        {
+          t.rotation[0] = qx / n;
+          t.rotation[1] = qy / n;
+          t.rotation[2] = qz / n;
+          t.rotation[3] = qw / n;
+        }
+        else
+        {
+          t.rotation[3] = 1.0f;
+        }
+      }
+    }
+
     void Ros2Component::poll_publication_(Publication &pub)
     {
       if (this->mw_ == nullptr || !this->mw_->connected())
@@ -1056,6 +1278,14 @@ namespace esphome
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
       }
+      else if (strcmp(pub.type->name, "nav_msgs/Odometry") == 0)
+      {
+        this->poll_odom_(pub, opts, now);
+      }
+      else if (strcmp(pub.type->name, "tf2_msgs/TFMessage") == 0)
+      {
+        this->poll_tf_(pub, opts);
+      }
       else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
       {
 #ifdef USE_LIGHT
@@ -1076,6 +1306,105 @@ namespace esphome
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
       }
+    }
+
+    void Ros2Component::poll_odom_(Publication &pub, const MiddlewareOptions &opts, uint32_t now)
+    {
+      if (pub.kind != PubKind::ODOM)
+        return;
+      // Open-loop dead reckoning from the last commanded wheel velocities.
+      // Stale commands (cmd_vel timeout) integrate as zero, never as the
+      // last value: a silent base must read stopped, not drifting.
+      float vl = 0.0f;
+      float vr = 0.0f;
+      if (this->cmd_active_)
+      {
+        vl = this->cmd_vl_;
+        vr = this->cmd_vr_;
+      }
+      float dt = 0.0f;
+      if (pub.odom_last_ms != 0)
+        dt = (now - pub.odom_last_ms) / 1000.0f;
+      pub.odom_last_ms = now;
+      if (dt < 0.0f)
+        dt = 0.0f;
+      if (dt > 1.0f)
+        dt = 1.0f;
+      float sep = pub.odom_wheel_separation;
+      if (sep <= 0.0f)
+        sep = 0.2f;
+      const float v = (vl + vr) * 0.5f;
+      const float w = (vr - vl) / sep;
+      pub.odom_x += v * cosf(pub.odom_theta) * dt;
+      pub.odom_y += v * sinf(pub.odom_theta) * dt;
+      pub.odom_theta += w * dt;
+      while (pub.odom_theta > 3.14159265f)
+        pub.odom_theta -= 6.2831853f;
+      while (pub.odom_theta < -3.14159265f)
+        pub.odom_theta += 6.2831853f;
+
+      OdometryMsg msg;
+      memset(&msg, 0, sizeof(msg));
+      this->fill_header_(msg.header, pub.frame_id);
+      strncpy(msg.child_frame_id, pub.child_frame_id, ROS2_FRAME_ID_LEN - 1);
+      msg.pose_position[0] = pub.odom_x;
+      msg.pose_position[1] = pub.odom_y;
+      const float half = pub.odom_theta * 0.5f;
+      msg.pose_orientation[2] = sinf(half);
+      msg.pose_orientation[3] = cosf(half);
+      msg.twist_linear[0] = v;
+      msg.twist_angular[2] = w;
+      this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+      if (!pub.tf_topic.empty())
+      {
+        this->publish_tf_transform_(pub.tf_topic, opts, msg.header.stamp_sec, pub.frame_id,
+                                    pub.child_frame_id, pub.odom_x, pub.odom_y,
+                                    msg.pose_orientation[2], msg.pose_orientation[3]);
+      }
+    }
+
+    void Ros2Component::publish_tf_transform_(const std::string &topic, const MiddlewareOptions &opts,
+                                              int32_t sec, const char *frame_id, const char *child_frame_id,
+                                              float x, float y, float qz, float qw)
+    {
+      const TypeDef *def = find_type("tf2_msgs/TFMessage");
+      if (def == nullptr)
+        return;
+      TFMessageMsg msg;
+      memset(&msg, 0, sizeof(msg));
+      msg.num_transforms = 1;
+      TFTransformMsg &t = msg.transforms[0];
+      t.header.stamp_sec = sec;
+      if (frame_id != nullptr)
+      {
+        strncpy(t.header.frame_id, frame_id, ROS2_FRAME_ID_LEN - 1);
+        t.header.frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+      }
+      if (child_frame_id != nullptr)
+      {
+        strncpy(t.child_frame_id, child_frame_id, ROS2_FRAME_ID_LEN - 1);
+        t.child_frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+      }
+      t.translation[0] = x;
+      t.translation[1] = y;
+      t.rotation[2] = qz;
+      t.rotation[3] = qw;
+      this->mw_->publish(topic, def, &msg, sizeof(msg), &opts);
+    }
+
+    void Ros2Component::poll_tf_(Publication &pub, const MiddlewareOptions &opts)
+    {
+      if (pub.kind != PubKind::TF || pub.num_tf_transforms == 0)
+        return;
+      TFMessageMsg msg;
+      memset(&msg, 0, sizeof(msg));
+      msg.num_transforms = pub.num_tf_transforms;
+      for (uint8_t i = 0; i < pub.num_tf_transforms; i++)
+      {
+        msg.transforms[i] = pub.tf_transforms[i];
+        this->fill_header_(msg.transforms[i].header, pub.tf_transforms[i].header.frame_id);
+      }
+      this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
     }
 
   } // namespace ros2

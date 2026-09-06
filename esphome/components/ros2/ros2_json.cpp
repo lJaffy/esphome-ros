@@ -257,8 +257,7 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
       return true;
     }) && ok;
   }
-  if (strcmp(type->name, "sensor_msgs/Range") == 0) {
-    if (out_len < sizeof(RangeMsg))
+  if (strcmp(type->name, "sensor_msgs/Range") == 0) {    if (out_len < sizeof(RangeMsg))
       return false;
     auto *msg = static_cast<RangeMsg *>(out);
     memset(msg, 0, sizeof(*msg));
@@ -319,6 +318,146 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
         msg->present = root["present"].as<bool>();
       if (root["location"].is<const char *>())
         copy_name(msg->location, root["location"].as<const char *>());
+      ok = true;
+      return true;
+    }) && ok;
+  }
+  if (strcmp(type->name, "geometry_msgs/Twist") == 0) {
+    if (out_len < sizeof(TwistMsg))
+      return false;
+    auto *msg = static_cast<TwistMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    // All-zero Twist is a valid stop command, so parse success never depends
+    // on any single key: absent fields read as zero.
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      JsonObjectConst linear = root["linear"].as<JsonObjectConst>();
+      if (!linear.isNull()) {
+        if (linear["x"].is<float>())
+          msg->linear_x = linear["x"].as<float>();
+        if (linear["y"].is<float>())
+          msg->linear_y = linear["y"].as<float>();
+        if (linear["z"].is<float>())
+          msg->linear_z = linear["z"].as<float>();
+      }
+      JsonObjectConst angular = root["angular"].as<JsonObjectConst>();
+      if (!angular.isNull()) {
+        if (angular["x"].is<float>())
+          msg->angular_x = angular["x"].as<float>();
+        if (angular["y"].is<float>())
+          msg->angular_y = angular["y"].as<float>();
+        if (angular["z"].is<float>())
+          msg->angular_z = angular["z"].as<float>();
+      }
+      ok = true;
+      return true;
+    }) && ok;
+  }
+  if (strcmp(type->name, "nav_msgs/Odometry") == 0) {
+    if (out_len < sizeof(OdometryMsg))
+      return false;
+    auto *msg = static_cast<OdometryMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      read_header(root, &msg->header);
+      if (root["child_frame_id"].is<const char *>())
+        copy_name(msg->child_frame_id, root["child_frame_id"].as<const char *>());
+      JsonObjectConst pose = root["pose"].as<JsonObjectConst>();
+      if (!pose.isNull()) {
+        JsonObjectConst pos = pose["position"].as<JsonObjectConst>();
+        if (!pos.isNull()) {
+          if (pos["x"].is<float>())
+            msg->pose_position[0] = pos["x"].as<float>();
+          if (pos["y"].is<float>())
+            msg->pose_position[1] = pos["y"].as<float>();
+          if (pos["z"].is<float>())
+            msg->pose_position[2] = pos["z"].as<float>();
+        }
+        JsonObjectConst ori = pose["orientation"].as<JsonObjectConst>();
+        if (!ori.isNull()) {
+          if (ori["x"].is<float>())
+            msg->pose_orientation[0] = ori["x"].as<float>();
+          if (ori["y"].is<float>())
+            msg->pose_orientation[1] = ori["y"].as<float>();
+          if (ori["z"].is<float>())
+            msg->pose_orientation[2] = ori["z"].as<float>();
+          if (ori["w"].is<float>())
+            msg->pose_orientation[3] = ori["w"].as<float>();
+        }
+      }
+      JsonObjectConst twist = root["twist"].as<JsonObjectConst>();
+      if (!twist.isNull()) {
+        JsonObjectConst lin = twist["linear"].as<JsonObjectConst>();
+        if (!lin.isNull()) {
+          if (lin["x"].is<float>())
+            msg->twist_linear[0] = lin["x"].as<float>();
+          if (lin["y"].is<float>())
+            msg->twist_linear[1] = lin["y"].as<float>();
+          if (lin["z"].is<float>())
+            msg->twist_linear[2] = lin["z"].as<float>();
+        }
+        JsonObjectConst ang = twist["angular"].as<JsonObjectConst>();
+        if (!ang.isNull()) {
+          if (ang["x"].is<float>())
+            msg->twist_angular[0] = ang["x"].as<float>();
+          if (ang["y"].is<float>())
+            msg->twist_angular[1] = ang["y"].as<float>();
+          if (ang["z"].is<float>())
+            msg->twist_angular[2] = ang["z"].as<float>();
+        }
+      }
+      ok = true;
+      return true;
+    }) && ok;
+  }
+  if (strcmp(type->name, "tf2_msgs/TFMessage") == 0) {
+    if (out_len < sizeof(TFMessageMsg))
+      return false;
+    auto *msg = static_cast<TFMessageMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      JsonArrayConst transforms = root["transforms"].as<JsonArrayConst>();
+      if (transforms.isNull())
+        return true;
+      size_t n = transforms.size();
+      if (n > ROS2_MAX_TF_TRANSFORMS)
+        n = ROS2_MAX_TF_TRANSFORMS;
+      msg->num_transforms = n;
+      size_t i = 0;
+      for (JsonVariantConst v : transforms) {
+        if (i >= n)
+          break;
+        JsonObjectConst t = v.as<JsonObjectConst>();
+        if (t.isNull())
+          continue;
+        TFTransformMsg *dst = &msg->transforms[i];
+        read_header(t, &dst->header);
+        if (t["child_frame_id"].is<const char *>())
+          copy_name(dst->child_frame_id, t["child_frame_id"].as<const char *>());
+        JsonObjectConst tf = t["transform"].as<JsonObjectConst>();
+        if (!tf.isNull()) {
+          JsonObjectConst tr = tf["translation"].as<JsonObjectConst>();
+          if (!tr.isNull()) {
+            if (tr["x"].is<float>())
+              dst->translation[0] = tr["x"].as<float>();
+            if (tr["y"].is<float>())
+              dst->translation[1] = tr["y"].as<float>();
+            if (tr["z"].is<float>())
+              dst->translation[2] = tr["z"].as<float>();
+          }
+          JsonObjectConst rot = tf["rotation"].as<JsonObjectConst>();
+          if (!rot.isNull()) {
+            if (rot["x"].is<float>())
+              dst->rotation[0] = rot["x"].as<float>();
+            if (rot["y"].is<float>())
+              dst->rotation[1] = rot["y"].as<float>();
+            if (rot["z"].is<float>())
+              dst->rotation[2] = rot["z"].as<float>();
+            if (rot["w"].is<float>())
+              dst->rotation[3] = rot["w"].as<float>();
+          }
+        }
+        i++;
+      }
       ok = true;
       return true;
     }) && ok;
@@ -406,6 +545,62 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
       root["power_supply_technology"] = msg->power_supply_technology;
       root["present"] = msg->present;
       root["location"] = msg->location;
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "nav_msgs/Odometry") == 0 && len >= sizeof(OdometryMsg)) {
+    auto *msg = static_cast<const OdometryMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      write_header(root, msg->header);
+      root["child_frame_id"] = msg->child_frame_id;
+      JsonObject pose = root["pose"].to<JsonObject>();
+      JsonObject pos = pose["position"].to<JsonObject>();
+      pos["x"] = msg->pose_position[0];
+      pos["y"] = msg->pose_position[1];
+      pos["z"] = msg->pose_position[2];
+      JsonObject ori = pose["orientation"].to<JsonObject>();
+      ori["x"] = msg->pose_orientation[0];
+      ori["y"] = msg->pose_orientation[1];
+      ori["z"] = msg->pose_orientation[2];
+      ori["w"] = msg->pose_orientation[3];
+      JsonArray cov = pose["covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 36; i++)
+        cov.add(0.0f);
+      JsonObject twist = root["twist"].to<JsonObject>();
+      JsonObject lin = twist["linear"].to<JsonObject>();
+      lin["x"] = msg->twist_linear[0];
+      lin["y"] = msg->twist_linear[1];
+      lin["z"] = msg->twist_linear[2];
+      JsonObject ang = twist["angular"].to<JsonObject>();
+      ang["x"] = msg->twist_angular[0];
+      ang["y"] = msg->twist_angular[1];
+      ang["z"] = msg->twist_angular[2];
+      JsonArray tcov = twist["covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 36; i++)
+        tcov.add(0.0f);
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "tf2_msgs/TFMessage") == 0 && len >= sizeof(TFMessageMsg)) {
+    auto *msg = static_cast<const TFMessageMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      JsonArray transforms = root["transforms"].to<JsonArray>();
+      for (uint8_t i = 0; i < msg->num_transforms; i++) {
+        const TFTransformMsg *t = &msg->transforms[i];
+        JsonObject entry = transforms.add<JsonObject>();
+        write_header(entry, t->header);
+        entry["child_frame_id"] = t->child_frame_id;
+        JsonObject tf = entry["transform"].to<JsonObject>();
+        JsonObject tr = tf["translation"].to<JsonObject>();
+        tr["x"] = t->translation[0];
+        tr["y"] = t->translation[1];
+        tr["z"] = t->translation[2];
+        JsonObject rot = tf["rotation"].to<JsonObject>();
+        rot["x"] = t->rotation[0];
+        rot["y"] = t->rotation[1];
+        rot["z"] = t->rotation[2];
+        rot["w"] = t->rotation[3];
+      }
     });
     return std::string(buf.c_str(), buf.size());
   }

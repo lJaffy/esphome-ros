@@ -14,6 +14,7 @@ namespace esphome
     constexpr size_t ROS2_MAX_TRAJ_POINTS = 2;
     constexpr size_t ROS2_MAX_JOY_AXES = 16;
     constexpr size_t ROS2_MAX_JOY_BUTTONS = 16;
+    constexpr size_t ROS2_MAX_TF_TRANSFORMS = 4;
     constexpr size_t ROS2_NAME_LEN = 32;
     constexpr size_t ROS2_STRING_LEN = 256;
     constexpr size_t ROS2_FRAME_ID_LEN = 64;
@@ -121,6 +122,47 @@ namespace esphome
       uint8_t power_supply_technology{0};
       bool present{false};
       char location[ROS2_NAME_LEN]{0};
+    };
+
+    // MCU projection of geometry_msgs/Twist: planar drivers use linear.x
+    // and angular.z; the rest pass through the codecs untouched.
+    struct TwistMsg
+    {
+      float linear_x{0.0f};
+      float linear_y{0.0f};
+      float linear_z{0.0f};
+      float angular_x{0.0f};
+      float angular_y{0.0f};
+      float angular_z{0.0f};
+    };
+
+    // MCU projection of nav_msgs/Odometry. Covariances publish as zeros
+    // (36 doubles each); the bridge keeps no uncertainty model.
+    struct OdometryMsg
+    {
+      HeaderMsg header;
+      char child_frame_id[ROS2_FRAME_ID_LEN]{0};
+      float pose_position[3]{0.0f};
+      float pose_orientation[4]{0.0f};
+      float twist_linear[3]{0.0f};
+      float twist_angular[3]{0.0f};
+    };
+
+    // MCU projection of geometry_msgs/TransformStamped + tf2_msgs/TFMessage
+    // (a sequence of the former). tf2_msgs lives in ros2/geometry2, not in
+    // the common_interfaces submodule, so parity covers members/keys only.
+    struct TFTransformMsg
+    {
+      HeaderMsg header;
+      char child_frame_id[ROS2_FRAME_ID_LEN]{0};
+      float translation[3]{0.0f};
+      float rotation[4]{0.0f};
+    };
+
+    struct TFMessageMsg
+    {
+      uint8_t num_transforms{0};
+      TFTransformMsg transforms[ROS2_MAX_TF_TRANSFORMS]{};
     };
 
     const TypeDef *find_type(const char *name);

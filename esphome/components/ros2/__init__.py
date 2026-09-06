@@ -27,6 +27,8 @@ def _auto_load(config=None):
             for kind in ("servo", "switch", "light"):
                 if target.get(kind) is not None:
                     libs.add(kind)
+            if target.get(CONF_DIFF_DRIVE) is not None:
+                libs.add("servo")
         elif sub.get(CONF_TARGETS) is not None:
             libs.add("servo")
     for pub in config.get(CONF_PUBLICATIONS, []):
@@ -74,6 +76,19 @@ CONF_MAX_VOLTAGE = "max_voltage"
 CONF_DESIGN_CAPACITY = "design_capacity"
 CONF_TECHNOLOGY = "technology"
 CONF_LOCATION = "location"
+CONF_DIFF_DRIVE = "diff_drive"
+CONF_LEFT = "left"
+CONF_RIGHT = "right"
+CONF_WHEEL_SEPARATION = "wheel_separation"
+CONF_MAX_LINEAR_SPEED = "max_linear_speed"
+CONF_MAX_ANGULAR_SPEED = "max_angular_speed"
+CONF_CMD_TIMEOUT = "cmd_timeout"
+CONF_ODOM = "odom"
+CONF_TRANSFORMS = "transforms"
+CONF_CHILD_FRAME_ID = "child_frame_id"
+CONF_TF_TOPIC = "tf_topic"
+CONF_TRANSLATION = "translation"
+CONF_ROTATION = "rotation"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -96,7 +111,12 @@ TELEMETRY_TYPES = [
     "sensor_msgs/Range",
     "sensor_msgs/BatteryState",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES
+MOTION_TYPES = [
+    "geometry_msgs/Twist",
+    "nav_msgs/Odometry",
+    "tf2_msgs/TFMessage",
+]
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES
 
 # Types with std_msgs/Header: stamp comes from the time: source, frame_id
 # from each publication's frame_id:.
@@ -107,6 +127,7 @@ HEADER_TYPES = [
     "sensor_msgs/CompressedImage",
     "sensor_msgs/Range",
     "sensor_msgs/BatteryState",
+    "nav_msgs/Odometry",
 ]
 
 QOS_LEVELS = ["reliable", "best_effort"]
@@ -184,12 +205,34 @@ def _light_target_schema():
     )
 
 
+def _wheel_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(Servo),
+        }
+    )
+
+
+def _diff_drive_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_LEFT): _wheel_schema(),
+            cv.Required(CONF_RIGHT): _wheel_schema(),
+            cv.Required(CONF_WHEEL_SEPARATION): cv.positive_float,
+            cv.Optional(CONF_MAX_LINEAR_SPEED, default=0.5): cv.positive_float,
+            cv.Optional(CONF_MAX_ANGULAR_SPEED, default=2.0): cv.positive_float,
+            cv.Optional(CONF_CMD_TIMEOUT, default="500ms"): cv.positive_time_period_milliseconds,
+        }
+    )
+
+
 def _single_target_schema():
     return cv.Schema(
         {
             cv.Optional("servo"): _servo_target_schema(),
             cv.Optional("switch"): _entity_ref(Switch),
             cv.Optional("light"): _light_target_schema(),
+            cv.Optional(CONF_DIFF_DRIVE): _diff_drive_schema(),
         }
     )
 
@@ -202,6 +245,14 @@ def _camera_source_schema() -> cv.Schema:
     )
 
 
+def _odom_source_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_WHEEL_SEPARATION): cv.positive_float,
+        }
+    )
+
+
 def _single_source_schema():
     return cv.Schema(
         {
@@ -210,6 +261,20 @@ def _single_source_schema():
             cv.Optional("binary_sensor"): _entity_ref(BinarySensor),
             cv.Optional("camera"): _camera_source_schema(),
             cv.Optional("light"): _light_target_schema(),
+            cv.Optional(CONF_ODOM): _odom_source_schema(),
+        }
+    )
+
+
+def _transform_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_FRAME_ID): _frame_id,
+            cv.Required(CONF_CHILD_FRAME_ID): _frame_id,
+            cv.Required(CONF_TRANSLATION): cv.All(
+                cv.ensure_list(cv.float_), cv.Length(min=3, max=3)),
+            cv.Required(CONF_ROTATION): cv.All(
+                cv.ensure_list(cv.float_), cv.Length(min=4, max=4)),
         }
     )
 
@@ -233,10 +298,11 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
     if type_ not in MULTI_JOINT_TYPES and has_targets:
         raise cv.Invalid(f"Type {type_} requires target: (singular)")
     if has_target:
-        kinds = [k for k in ("servo", "switch", "light")
+        kinds = [k for k in ("servo", "switch", "light", CONF_DIFF_DRIVE)
                  if config[CONF_TARGET].get(k) is not None]
         if len(kinds) != 1:
-            raise cv.Invalid("target: needs exactly one of servo:, switch:, light:")
+            raise cv.Invalid(
+                "target: needs exactly one of servo:, switch:, light:, diff_drive:")
         if "servo" in kinds and type_ == "std_msgs/Bool":
             raise cv.Invalid("servo: targets need std_msgs/Float32")
         if "servo" in kinds and type_ in LIGHT_TYPES:
@@ -245,6 +311,12 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
             raise cv.Invalid("switch: targets need std_msgs/Bool")
         if "light" in kinds and type_ not in LIGHT_TYPES:
             raise cv.Invalid(f"light: targets need one of {LIGHT_TYPES}")
+        if CONF_DIFF_DRIVE in kinds and type_ != "geometry_msgs/Twist":
+            raise cv.Invalid(
+                f"diff_drive: targets need geometry_msgs/Twist (got {type_})")
+        if type_ == "geometry_msgs/Twist" and CONF_DIFF_DRIVE not in kinds:
+            raise cv.Invalid(
+                "geometry_msgs/Twist needs a diff_drive: target (left:/right: wheel servos)")
     if has_targets:
         seen = set()
         for entry in config[CONF_TARGETS]:
@@ -279,26 +351,36 @@ SUBSCRIPTION_SCHEMA = cv.All(
 
 
 def _validate_publication(config: ConfigType) -> ConfigType:
-    has_source = CONF_SOURCE in config
-    has_sources = CONF_SOURCES in config
-    if has_source == has_sources:
-        raise cv.Invalid(
-            "Use exactly one of source: or sources: per publication")
     type_ = config[CONF_TYPE]
     if type_ in UNMAPPED_TYPES:
         raise cv.Invalid(
             f"Type {type_} is schema-reserved: codec exists but no "
             "source: entity mapping yet")
-    if type_ in MULTI_JOINT_TYPES and not has_sources:
-        raise cv.Invalid(f"Type {type_} requires sources: (plural)")
-    if type_ not in MULTI_JOINT_TYPES and has_sources:
-        raise cv.Invalid(f"Type {type_} requires source: (singular)")
+    is_tf = type_ == "tf2_msgs/TFMessage"
+    has_source = CONF_SOURCE in config
+    has_sources = CONF_SOURCES in config
+    if is_tf:
+        if has_source or has_sources:
+            raise cv.Invalid(
+                "tf2_msgs/TFMessage uses transforms:, not source:/sources:")
+        transforms = config.get(CONF_TRANSFORMS, [])
+        if not 1 <= len(transforms) <= 4:
+            raise cv.Invalid(
+                "tf2_msgs/TFMessage needs 1-4 transforms: entries")
+    else:
+        if has_source == has_sources:
+            raise cv.Invalid(
+                "Use exactly one of source: or sources: per publication")
+        if type_ in MULTI_JOINT_TYPES and not has_sources:
+            raise cv.Invalid(f"Type {type_} requires sources: (plural)")
+        if type_ not in MULTI_JOINT_TYPES and has_sources:
+            raise cv.Invalid(f"Type {type_} requires source: (singular)")
     if has_source:
-        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light")
+        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light", CONF_ODOM)
                  if config[CONF_SOURCE].get(k) is not None]
         if len(kinds) != 1:
             raise cv.Invalid(
-                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:")
+                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:, odom:")
         if "sensor" in kinds and type_ not in ("std_msgs/Float32", *TELEMETRY_TYPES):
             raise cv.Invalid(
                 "sensor: sources need std_msgs/Float32, sensor_msgs/Range, "
@@ -313,6 +395,12 @@ def _validate_publication(config: ConfigType) -> ConfigType:
             raise cv.Invalid("camera: sources need sensor_msgs/CompressedImage")
         if "light" in kinds and type_ != "std_msgs/ColorRGBA":
             raise cv.Invalid("light: sources need std_msgs/ColorRGBA")
+        if CONF_ODOM in kinds and type_ != "nav_msgs/Odometry":
+            raise cv.Invalid(
+                f"odom: sources need nav_msgs/Odometry (got {type_})")
+        if type_ == "nav_msgs/Odometry" and CONF_ODOM not in kinds:
+            raise cv.Invalid(
+                "nav_msgs/Odometry needs an odom: source (wheel separation)")
     if type_ == "sensor_msgs/Joy" and has_source:
         raise cv.Invalid("sensor_msgs/Joy is subscribe-only (no source entity produces axes/buttons)")
     if CONF_FRAME_ID in config and type_ not in HEADER_TYPES:
@@ -324,6 +412,12 @@ def _validate_publication(config: ConfigType) -> ConfigType:
     for key in BATTERY_PARAMS:
         if key in config and type_ != "sensor_msgs/BatteryState":
             raise cv.Invalid(f"{key}: only valid with sensor_msgs/BatteryState")
+    if CONF_TRANSFORMS in config and not is_tf:
+        raise cv.Invalid("transforms: only valid with tf2_msgs/TFMessage")
+    if CONF_TF_TOPIC in config and type_ != "nav_msgs/Odometry":
+        raise cv.Invalid("tf_topic: only valid with nav_msgs/Odometry")
+    if CONF_CHILD_FRAME_ID in config and type_ != "nav_msgs/Odometry":
+        raise cv.Invalid("child_frame_id: only valid with nav_msgs/Odometry")
     if CONF_MIN_RANGE in config or CONF_MAX_RANGE in config:
         if config.get(CONF_MIN_RANGE, 0.0) > config.get(CONF_MAX_RANGE, 0.0):
             raise cv.Invalid("min_range: must not exceed max_range:")
@@ -345,6 +439,9 @@ PUBLICATION_SCHEMA = cv.All(
             cv.Optional(CONF_INTERVAL): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_FRAME_ID): _frame_id,
             cv.Optional(CONF_QOS): cv.one_of(*QOS_LEVELS),
+            cv.Optional(CONF_CHILD_FRAME_ID): _frame_id,
+            cv.Optional(CONF_TF_TOPIC): cv.string,
+            cv.Optional(CONF_TRANSFORMS): cv.ensure_list(_transform_schema()),
             cv.Optional(CONF_RADIATION_TYPE): cv.one_of(*RADIATION_TYPES),
             cv.Optional(CONF_FIELD_OF_VIEW): cv.float_,
             cv.Optional(CONF_MIN_RANGE): cv.float_,
@@ -397,6 +494,16 @@ async def to_code(config: ConfigType) -> None:
             elif (light := target.get("light")) is not None:
                 ent = await cg.get_variable(light[CONF_ID])
                 cg.add(var.add_light_subscription(topic, type_, ent, light[CONF_FIELD]))
+            elif (dd := target.get(CONF_DIFF_DRIVE)) is not None:
+                left = await cg.get_variable(dd[CONF_LEFT][CONF_ID])
+                right = await cg.get_variable(dd[CONF_RIGHT][CONF_ID])
+                cg.add(var.add_diff_drive_subscription(
+                    topic, left, right,
+                    dd[CONF_WHEEL_SEPARATION],
+                    dd[CONF_MAX_LINEAR_SPEED],
+                    dd[CONF_MAX_ANGULAR_SPEED],
+                    dd[CONF_CMD_TIMEOUT],
+                ))
         else:
             for entry in sub[CONF_TARGETS]:
                 servo = entry["servo"]
@@ -436,6 +543,24 @@ async def to_code(config: ConfigType) -> None:
             elif (light := source.get("light")) is not None:
                 ent = await cg.get_variable(light[CONF_ID])
                 cg.add(var.add_light_publication(topic, type_, ent, interval))
+            elif (odom := source.get(CONF_ODOM)) is not None:
+                cg.add(var.add_odom_publication(topic, interval))
+                cg.add(var.set_odom_params(
+                    topic,
+                    odom[CONF_WHEEL_SEPARATION],
+                    pub.get(CONF_CHILD_FRAME_ID, "base_link"),
+                    pub.get(CONF_TF_TOPIC, ""),
+                ))
+        elif type_ == "tf2_msgs/TFMessage":
+            cg.add(var.add_tf_publication(topic, interval))
+            for entry in pub.get(CONF_TRANSFORMS, []):
+                t = entry[CONF_TRANSLATION]
+                r = entry[CONF_ROTATION]
+                cg.add(var.add_tf_transform(
+                    topic,
+                    entry[CONF_FRAME_ID], entry[CONF_CHILD_FRAME_ID],
+                    t[0], t[1], t[2], r[0], r[1], r[2], r[3],
+                ))
         else:
             cg.add(var.add_joint_state_publication(topic, type_, interval))
             for entry in pub[CONF_SOURCES]:

@@ -92,6 +92,51 @@ uint32_t names_size(uint32_t size, const char (*names)[ros2::ROS2_NAME_LEN], uin
   return size;
 }
 
+// Fixed float64 vector on the wire, floats in the struct.
+bool ser_f64_vec(ucdrBuffer *ub, const float *vals, uint8_t n) {
+  for (uint8_t i = 0; i < n; i++)
+    if (!ucdr_serialize_double(ub, (double) vals[i]))
+      return false;
+  return true;
+}
+
+bool de_f64_vec(ucdrBuffer *ub, float *vals, uint8_t n) {
+  for (uint8_t i = 0; i < n; i++) {
+    double d = 0;
+    if (!ucdr_deserialize_double(ub, &d))
+      return false;
+    vals[i] = (float) d;
+  }
+  return true;
+}
+
+uint32_t f64_vec_size(uint32_t size, uint8_t n) {
+  for (uint8_t i = 0; i < n; i++)
+    size += (uint32_t) (ucdr_alignment(size, 8) + 8);
+  return size;
+}
+
+bool ser_cov36(ucdrBuffer *ub) {
+  for (uint8_t i = 0; i < 36; i++)
+    if (!ucdr_serialize_double(ub, 0.0))
+      return false;
+  return true;
+}
+
+bool de_cov36(ucdrBuffer *ub) {
+  double d = 0;
+  for (uint8_t i = 0; i < 36; i++)
+    if (!ucdr_deserialize_double(ub, &d))
+      return false;
+  return true;
+}
+
+uint32_t cov36_size(uint32_t size) {
+  for (uint8_t i = 0; i < 36; i++)
+    size += (uint32_t) (ucdr_alignment(size, 8) + 8);
+  return size;
+}
+
 }  // namespace
 
 bool dds_topic_name(const char *ros_topic, char *out, size_t cap) {
@@ -128,6 +173,12 @@ const char *dds_type_suffix(const char *ros_name) {
     return "sensor_msgs::msg::dds_::Range_";
   if (strcmp(ros_name, "sensor_msgs/BatteryState") == 0)
     return "sensor_msgs::msg::dds_::BatteryState_";
+  if (strcmp(ros_name, "geometry_msgs/Twist") == 0)
+    return "geometry_msgs::msg::dds_::Twist_";
+  if (strcmp(ros_name, "nav_msgs/Odometry") == 0)
+    return "nav_msgs::msg::dds_::Odometry_";
+  if (strcmp(ros_name, "tf2_msgs/TFMessage") == 0)
+    return "tf2_msgs::msg::dds_::TFMessage_";
   if (strcmp(ros_name, "sensor_msgs/CompressedImage") == 0)
     return "sensor_msgs::msg::dds_::CompressedImage_";
   return "";
@@ -215,6 +266,35 @@ uint32_t XcdrCodec::size_of(const ros2::TypeDef *type, const void *sample, size_
     size += (uint32_t) (ucdr_alignment(size, 4) + 4);  // cell_temperature: empty
     size = str_size(size, msg->location);
     size = str_size(size, "");  // serial_number: empty
+    return size;
+  }
+  if (strcmp(type->name, "geometry_msgs/Twist") == 0 && len >= sizeof(ros2::TwistMsg)) {
+    // linear xyz + angular xyz, all float64 on the wire.
+    return f64_vec_size(0, 6);
+  }
+  if (strcmp(type->name, "nav_msgs/Odometry") == 0 && len >= sizeof(ros2::OdometryMsg)) {
+    auto *msg = static_cast<const ros2::OdometryMsg *>(sample);
+    size = header_size(0, &msg->header);
+    size = str_size(size, msg->child_frame_id);
+    size = f64_vec_size(size, 3);  // pose position
+    size = f64_vec_size(size, 4);  // pose orientation
+    size = cov36_size(size);       // pose covariance: zeros
+    size = f64_vec_size(size, 3);  // twist linear
+    size = f64_vec_size(size, 3);  // twist angular
+    size = cov36_size(size);       // twist covariance: zeros
+    return size;
+  }
+  if (strcmp(type->name, "tf2_msgs/TFMessage") == 0 && len >= sizeof(ros2::TFMessageMsg)) {
+    auto *msg = static_cast<const ros2::TFMessageMsg *>(sample);
+    uint8_t n = msg->num_transforms > ros2::ROS2_MAX_TF_TRANSFORMS ? ros2::ROS2_MAX_TF_TRANSFORMS
+                                                                   : msg->num_transforms;
+    size = (uint32_t) (ucdr_alignment(size, 4) + 4);  // transforms sequence length
+    for (uint8_t i = 0; i < n; i++) {
+      size = header_size(size, &msg->transforms[i].header);
+      size = str_size(size, msg->transforms[i].child_frame_id);
+      size = f64_vec_size(size, 3);  // translation
+      size = f64_vec_size(size, 4);  // rotation
+    }
     return size;
   }
   return 0;
@@ -311,6 +391,42 @@ bool XcdrCodec::serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void 
     if (!ucdr_serialize_uint32_t(ub, 0) || !ucdr_serialize_uint32_t(ub, 0))
       return false;
     return ucdr_serialize_string(ub, msg->location) && ucdr_serialize_string(ub, "");
+  }
+  if (strcmp(type->name, "geometry_msgs/Twist") == 0 && len >= sizeof(ros2::TwistMsg)) {
+    // Subscribe-only on this bridge; no publish path serializes Twist.
+    (void) ub;
+    return false;
+  }
+  if (strcmp(type->name, "nav_msgs/Odometry") == 0 && len >= sizeof(ros2::OdometryMsg)) {
+    auto *msg = static_cast<const ros2::OdometryMsg *>(sample);
+    if (!ser_header(ub, &msg->header))
+      return false;
+    if (!ucdr_serialize_string(ub, msg->child_frame_id))
+      return false;
+    if (!ser_f64_vec(ub, msg->pose_position, 3) || !ser_f64_vec(ub, msg->pose_orientation, 4))
+      return false;
+    if (!ser_cov36(ub))
+      return false;
+    if (!ser_f64_vec(ub, msg->twist_linear, 3) || !ser_f64_vec(ub, msg->twist_angular, 3))
+      return false;
+    return ser_cov36(ub);
+  }
+  if (strcmp(type->name, "tf2_msgs/TFMessage") == 0 && len >= sizeof(ros2::TFMessageMsg)) {
+    auto *msg = static_cast<const ros2::TFMessageMsg *>(sample);
+    uint8_t n = msg->num_transforms > ros2::ROS2_MAX_TF_TRANSFORMS ? ros2::ROS2_MAX_TF_TRANSFORMS
+                                                                   : msg->num_transforms;
+    if (!ucdr_serialize_uint32_t(ub, n))
+      return false;
+    for (uint8_t i = 0; i < n; i++) {
+      const ros2::TFTransformMsg *t = &msg->transforms[i];
+      if (!ser_header(ub, &t->header))
+        return false;
+      if (!ucdr_serialize_string(ub, t->child_frame_id))
+        return false;
+      if (!ser_f64_vec(ub, t->translation, 3) || !ser_f64_vec(ub, t->rotation, 4))
+        return false;
+    }
+    return true;
   }
   return false;
 }
@@ -442,6 +558,49 @@ bool XcdrCodec::deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out
     char serial[ros2::ROS2_NAME_LEN];
     return ucdr_deserialize_string(ub, msg->location, sizeof(msg->location)) &&
            ucdr_deserialize_string(ub, serial, sizeof(serial));
+  }
+  if (strcmp(type->name, "geometry_msgs/Twist") == 0 && out_len >= sizeof(ros2::TwistMsg)) {
+    auto *msg = static_cast<ros2::TwistMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_f64_vec(ub, &msg->linear_x, 3))
+      return false;
+    return de_f64_vec(ub, &msg->angular_x, 3);
+  }
+  if (strcmp(type->name, "nav_msgs/Odometry") == 0 && out_len >= sizeof(ros2::OdometryMsg)) {
+    auto *msg = static_cast<ros2::OdometryMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_header(ub, &msg->header))
+      return false;
+    if (!ucdr_deserialize_string(ub, msg->child_frame_id, sizeof(msg->child_frame_id)))
+      return false;
+    if (!de_f64_vec(ub, msg->pose_position, 3) || !de_f64_vec(ub, msg->pose_orientation, 4))
+      return false;
+    if (!de_cov36(ub))
+      return false;
+    if (!de_f64_vec(ub, msg->twist_linear, 3) || !de_f64_vec(ub, msg->twist_angular, 3))
+      return false;
+    return de_cov36(ub);
+  }
+  if (strcmp(type->name, "tf2_msgs/TFMessage") == 0 && out_len >= sizeof(ros2::TFMessageMsg)) {
+    auto *msg = static_cast<ros2::TFMessageMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    uint32_t n = 0;
+    // Bound the wire length before reading transforms.
+    ucdrBuffer probe = *ub;
+    if (!ucdr_deserialize_uint32_t(&probe, &n) || n > ros2::ROS2_MAX_TF_TRANSFORMS)
+      return false;
+    *ub = probe;
+    msg->num_transforms = (uint8_t) n;
+    for (uint32_t i = 0; i < n; i++) {
+      ros2::TFTransformMsg *t = &msg->transforms[i];
+      if (!de_header(ub, &t->header))
+        return false;
+      if (!ucdr_deserialize_string(ub, t->child_frame_id, sizeof(t->child_frame_id)))
+        return false;
+      if (!de_f64_vec(ub, t->translation, 3) || !de_f64_vec(ub, t->rotation, 4))
+        return false;
+    }
+    return true;
   }
   return false;
 }

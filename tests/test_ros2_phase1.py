@@ -267,6 +267,109 @@ def test_qos_rejects_unknown_level(ros2):
              source={"sensor": {"id": "s"}}, qos="sometimes")
 
 
+def _twist_sub(ros2, **kw):
+    base = {"topic": "/cmd_vel", "type": "geometry_msgs/Twist",
+            "target": {"diff_drive": {"left": {"id": "l"}, "right": {"id": "r"},
+                                      "wheel_separation": 0.2}}}
+    base.update(kw)
+    return ros2.SUBSCRIPTION_SCHEMA(base)
+
+
+def test_twist_requires_diff_drive(ros2):
+    with pytest.raises(Exception):
+        ros2.SUBSCRIPTION_SCHEMA(
+            {"topic": "/cmd_vel", "type": "geometry_msgs/Twist",
+             "target": {"servo": {"id": "s"}}}
+        )
+
+
+def test_diff_drive_requires_twist(ros2):
+    with pytest.raises(Exception):
+        ros2.SUBSCRIPTION_SCHEMA(
+            {"topic": "/x", "type": "std_msgs/Float32",
+             "target": {"diff_drive": {"left": {"id": "l"}, "right": {"id": "r"},
+                                       "wheel_separation": 0.2}}}
+        )
+
+
+def test_valid_diff_drive(ros2):
+    cfg = _twist_sub(ros2)
+    assert cfg["target"]["diff_drive"]["wheel_separation"] == 0.2
+
+
+def test_odom_needs_odom_source(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="nav_msgs/Odometry",
+             source={"sensor": {"id": "s"}})
+
+
+def test_valid_odom_source(ros2):
+    cfg = _pub(ros2, type="nav_msgs/Odometry",
+               source={"odom": {"wheel_separation": 0.2}},
+               frame_id="odom", child_frame_id="base_link",
+               tf_topic="/tf")
+    assert cfg["child_frame_id"] == "base_link"
+    assert cfg["tf_topic"] == "/tf"
+
+
+def test_tf_needs_transforms(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/tf", "type": "tf2_msgs/TFMessage"}
+        )
+
+
+def test_tf_rejects_source(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/tf", "type": "tf2_msgs/TFMessage",
+             "source": {"sensor": {"id": "s"}},
+             "transforms": [{"frame_id": "base_link", "child_frame_id": "laser",
+                             "translation": [0.1, 0.0, 0.2],
+                             "rotation": [0.0, 0.0, 0.0, 1.0]}]}
+        )
+
+
+def _tf_pub(ros2, **kw):
+    base = {"topic": "/tf", "type": "tf2_msgs/TFMessage",
+            "transforms": [{"frame_id": "base_link", "child_frame_id": "laser",
+                            "translation": [0.1, 0.0, 0.2],
+                            "rotation": [0.0, 0.0, 0.0, 1.0]}]}
+    base.update(kw)
+    return ros2.PUBLICATION_SCHEMA(base)
+
+
+def test_valid_tf(ros2):
+    cfg = _tf_pub(ros2)
+    assert len(cfg["transforms"]) == 1
+
+
+def test_transforms_rejected_off_type(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}},
+             transforms=[{"frame_id": "a", "child_frame_id": "b",
+                          "translation": [0.0, 0.0, 0.0],
+                          "rotation": [0.0, 0.0, 0.0, 1.0]}])
+
+
+def test_tf_topic_rejected_off_type(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, tf_topic="/tf")
+
+
+def test_child_frame_id_rejected_off_type(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="sensor_msgs/Range",
+             source={"sensor": {"id": "s"}}, child_frame_id="base_link")
+
+
+def test_supported_types_cover_motion(ros2):
+    for t in ("geometry_msgs/Twist", "nav_msgs/Odometry", "tf2_msgs/TFMessage"):
+        assert t in ros2.SUPPORTED_TYPES
+
+
 def test_auto_load_full_without_config(ros2):
     libs = ros2._auto_load()
     for lib in ("json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"):
