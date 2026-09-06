@@ -529,6 +529,18 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_middleware_name(config[CONF_MIDDLEWARE]))
     cg.add(var.set_default_publish_interval(
         config[CONF_DEFAULT_PUBLISH_INTERVAL]))
+    # The servo component never defines USE_SERVO (no IS_PLATFORM_COMPONENT,
+    # no in-tree optional users), so declare it here whenever this bridge
+    # emits servo calls. Every other USE_* we test is defined by its own
+    # component's to_code (e.g. sensor) exactly when that entity is built.
+    uses_servo = any(
+        sub.get(CONF_TARGET, {}).get("servo") is not None
+        or CONF_DIFF_DRIVE in sub.get(CONF_TARGET, {})
+        or CONF_TARGETS in sub
+        for sub in config[CONF_SUBSCRIPTIONS]
+    ) or any(CONF_SOURCES in pub for pub in config[CONF_PUBLICATIONS])
+    if uses_servo:
+        cg.add_define("USE_SERVO")
     if (time_id := config.get(CONF_TIME_ID)) is not None:
         time_var = await cg.get_variable(time_id)
         cg.add(var.set_time(time_var))
