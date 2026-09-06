@@ -1183,17 +1183,6 @@ namespace esphome
         }
       }
     }
-      const TypeDef *def = find_type("tf2_msgs/TFMessage");
-      if (def == nullptr)
-        return 255;
-      Publication pub;
-      pub.topic = topic;
-      pub.type = def;
-      pub.kind = PubKind::TF;
-      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
-      this->pubs_[this->num_pubs_] = pub;
-      return this->num_pubs_++;
-    }
 
     void Ros2Component::add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
                                          float tx, float ty, float tz, float qx, float qy, float qz,
