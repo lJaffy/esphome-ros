@@ -55,6 +55,8 @@ Limits: 16 subscriptions, 16 publications, 16 targets/sources per topic, 16 join
 | `std_msgs/Bool` | `switch` | `switch`, `binary_sensor` |
 | `std_msgs/Float32` | `servo` (single) | `sensor` |
 | `std_msgs/Int32`, `std_msgs/String` | — (rejected: codec-only, no entity mapping yet) | — (rejected) |
+| `sensor_msgs/Range` | — (rejected: publish-only) | `sensor` + geometry opts (`radiation_type`, `field_of_view`, `min_range`, `max_range`, `variance`) |
+| `sensor_msgs/BatteryState` | — (rejected: publish-only) | `sensor` (pack voltage) + `min_voltage`/`max_voltage` map, `design_capacity`, `technology`, `location` |
 | `sensor_msgs/JointState`, `trajectory_msgs/JointTrajectory` | `targets: [servo + joint_name]` | `sources: [servo + joint_name]` (trajectory uses `points[0]`) |
 | `std_msgs/ColorRGBA` | `light (field: rgb\|brightness)` | `light` |
 | `sensor_msgs/Joy` | `light (field: rgb)` — subscribe-only | — (rejected) |
@@ -116,7 +118,40 @@ ros2:
       source: {camera: {id: sense_camera}}
 ```
 
-Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and `Joy` publications are rejected at validation, not silently dropped.
+Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and all publish-only types as subscriptions (`Joy`, `Range`, `BatteryState`) are rejected at validation, not silently dropped. `frame_id:` is rejected on headerless types; `radiation_type:`/`field_of_view:`/`min_range:`/`max_range:`/`variance:` only with `Range`; `min_voltage:`/`max_voltage:`/`design_capacity:`/`technology:`/`location:` only with `BatteryState` (with `min ≤ max` cross-checks).
+
+### Time sync, stamps, and frames
+
+```yaml
+time:
+  - platform: sntp
+    id: sntp_time
+
+ros2:
+  middleware: xrce_dds
+  time: sntp_time   # optional; stamps all headers, else zeros
+  publications:
+    - topic: /joint_states
+      type: sensor_msgs/JointState
+      frame_id: base_link  # optional, header types only, [A-Za-z0-9/_-]
+      sources: [...]
+```
+
+`stamp.sec` comes from `RealTimeClock::utcnow()` (`nanosec` is 0 — ESPTime has no sub-second field); without `time:` (or before SNTP sync) stamps stay `0`. `frame_id` is truncated to 63 chars.
+
+### QoS
+
+Per-subscription/publication `qos: reliable | best_effort` (default `reliable`, i.e. current behavior):
+
+```yaml
+  subscriptions:
+    - topic: /sonar_fix/target
+      type: std_msgs/Float32
+      qos: best_effort
+      target: {servo: {id: pan_servo}}
+```
+
+MQTT maps explicit `reliable → qos 1`, `best_effort → qos 0`; unset keeps `ros2_mqtt.default_qos`. XRCE-DDS creates `BEST_EFFORT` endpoints on dedicated best-effort streams (own 2 kB output buffer; input needs none) and matching `BEST_EFFORT` endpoint QoS XML — reliable endpoints are byte-identical to before. Images always use the reliable fragmented stream. If your agent rejects the best-effort dialect, entity creation fails loudly in the logs (verify with `MicroXRCEAgent` first).
 
 ## `ros2_mqtt`: JSON-over-MQTT transport
 
@@ -133,7 +168,7 @@ ros2_mqtt:
   default_retain: false # images never retained
 ```
 
-Images are hand-encoded `{"format":"jpeg","data":"<base64>"}` (no ArduinoJson arena blow-up).
+Images are hand-encoded `{"header":{...},"format":"jpeg","data":"<base64>"}` (no ArduinoJson arena blow-up).
 
 ## `xrce_dds`: native DDS transport
 
@@ -163,7 +198,7 @@ MicroXRCEAgent udp4 -p 8888
 ros2 topic echo /joint_states
 ```
 
-Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4. `max_topics`/`max_datawriters`/`max_datareaders` are clamped at validation to those compile-time caps, and distinct DDS topics (shared across readers/writers) are budgeted at runtime — over-budget `subscribe`/`publish` fails loudly instead of overflowing.
+Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4. `max_topics`/`max_datawriters`/`max_datareaders` are clamped at validation to those compile-time caps, and distinct DDS topics (shared across readers/writers) are budgeted at runtime — over-budget `subscribe`/`publish` fails loudly instead of overflowing. `dump_config` reports topics used, cumulative TX ok/fail and RX counts, and last-RX age (stale age with live link = silent-agent symptom, see known gap).
 
 ## Examples
 
@@ -310,6 +345,39 @@ ros2:
 
 Drop to XGA/SVGA if heap degrades at 1 fps.
 
+### 5. `sensor_telemetry.yaml` — Range + BatteryState (ESP32-S3, MQTT)
+
+Template sensors stand in for real drivers (`ultrasonic_sensor` in m, `adc` in V); SNTP time stamps all headers:
+
+```yaml
+time:
+  - platform: sntp
+    id: sntp_time
+ros2:
+  middleware: mqtt
+  time: sntp_time
+  publications:
+    - topic: /sonar/range
+      type: sensor_msgs/Range
+      source: {sensor: {id: sonar_distance}}
+      frame_id: sonar
+      qos: best_effort
+      radiation_type: ultrasound
+      field_of_view: 0.5
+      min_range: 0.02
+      max_range: 4.0
+      interval: 1s
+    - topic: /battery/state
+      type: sensor_msgs/BatteryState
+      source: {sensor: {id: pack_voltage}}
+      min_voltage: 3.0
+      max_voltage: 4.2
+      design_capacity: 2.5
+      technology: lipo
+      location: main_pack
+      interval: 10s
+```
+
 ## Middleware choice
 
 |  | `ros2_mqtt` | `xrce_dds` |
@@ -334,7 +402,7 @@ python -m pytest tests/
 esphome/components/ros2/       # __init__.py, ros2_component.{h,cpp}, ros2_{types,json,middleware}.{h,cpp}
 esphome/components/ros2_mqtt/  # __init__.py, ros2_mqtt.{h,cpp}
 esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}
-examples/*.yaml                # 4 demos above
+examples/*.yaml                # 5 demos above
 tests/*.py                     # 3 pytest files
 third_party/common_interfaces  # submodule, canonical .msg
 ```

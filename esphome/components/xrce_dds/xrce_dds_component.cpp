@@ -119,6 +119,9 @@ void XrceDdsComponent::setup() {
                                                       this->in_buf_.size(), XRCE_STREAM_HISTORY);
   this->img_stream_ = uxr_create_output_reliable_stream(&this->session_, this->img_buf_.data(),
                                                         this->img_buf_.size(), XRCE_STREAM_HISTORY);
+  this->out_be_stream_ = uxr_create_output_best_effort_stream(&this->session_, this->out_be_buf_.data(),
+                                                              this->out_be_buf_.size());
+  this->in_be_stream_ = uxr_create_input_best_effort_stream(&this->session_);
   uxr_set_topic_callback(&this->session_, &XrceDdsComponent::topic_trampoline_, this);
   this->session_init_ = true;
   if (this->max_packet_length_ != UXR_CONFIG_CUSTOM_TRANSPORT_MTU) {
@@ -160,6 +163,10 @@ void XrceDdsComponent::dump_config() {
                 (unsigned) this->max_datawriters_);
   ESP_LOGCONFIG(TAG, "  Topics: %u/%u", (unsigned) this->count_topics_(),
                 (unsigned) this->max_topics_);
+  const uint32_t now = App.get_loop_component_start_time();
+  ESP_LOGCONFIG(TAG, "  TX ok: %u, TX fail: %u, RX: %u, last RX age: %ums", (unsigned) this->tx_ok_,
+                (unsigned) this->tx_fail_, (unsigned) this->rx_count_,
+                (unsigned) (this->last_rx_ == 0 ? 0 : now - this->last_rx_));
 }
 
 void XrceDdsComponent::drop_link_() {
@@ -233,6 +240,22 @@ void build_endpoint_xml(char *out, size_t cap, const char *kind, const char *top
                         const char *type) {
   snprintf(out, cap,
            "<dds><%s><topic><kind>NO_KEY</kind><name>%s</name><dataType>%s</dataType></topic></%s>",
+           kind, topic, type, kind);
+}
+
+// Same endpoint with an explicit reliability QoS. Only emitted for
+// best_effort endpoints; reliable ones keep the bare form above so default
+// behavior is byte-identical. If the agent rejects this dialect the entity
+// creation fails loudly (never silently) — verify against your agent.
+void build_endpoint_qos_xml(char *out, size_t cap, const char *kind, const char *topic,
+                            const char *type, bool reliable) {
+  if (reliable) {
+    build_endpoint_xml(out, cap, kind, topic, type);
+    return;
+  }
+  snprintf(out, cap,
+           "<dds><%s><topic><kind>NO_KEY</kind><name>%s</name><dataType>%s</dataType></topic>"
+           "<qos><reliability><kind>BEST_EFFORT</kind></reliability></qos></%s>",
            kind, topic, type, kind);
 }
 
@@ -364,7 +387,8 @@ bool XrceDdsComponent::create_pending_entities_() {
       reqs[n++] = p.topic_req;
     }
     e.reader_id = uxr_object_id(this->next_reader_n_++, UXR_DATAREADER_ID);
-    build_endpoint_xml(xml, sizeof(xml), "data_reader", dds_topic, dds_type_name(e.type));
+    build_endpoint_qos_xml(xml, sizeof(xml), "data_reader", dds_topic, dds_type_name(e.type),
+                           e.reliable);
     p.endpoint_req = uxr_buffer_create_datareader_xml(&this->session_, this->out_stream_,
                                                       e.reader_id, this->subscriber_id_, xml,
                                                       UXR_REPLACE);
@@ -388,7 +412,8 @@ bool XrceDdsComponent::create_pending_entities_() {
       reqs[n++] = p.topic_req;
     }
     e.writer_id = uxr_object_id(this->next_writer_n_++, UXR_DATAWRITER_ID);
-    build_endpoint_xml(xml, sizeof(xml), "data_writer", dds_topic, dds_type_name(e.type));
+    build_endpoint_qos_xml(xml, sizeof(xml), "data_writer", dds_topic, dds_type_name(e.type),
+                           e.reliable);
     p.endpoint_req = uxr_buffer_create_datawriter_xml(&this->session_, this->out_stream_,
                                                       e.writer_id, this->publisher_id_, xml,
                                                       UXR_REPLACE);
@@ -432,8 +457,8 @@ bool XrceDdsComponent::create_pending_entities_() {
       continue;
     if (p.reader != nullptr) {
       p.reader->created = true;
-      uxr_buffer_request_data(&this->session_, this->out_stream_, p.reader->reader_id,
-                              this->in_stream_, &dc);
+      uxrStreamId in = p.reader->reliable ? this->in_stream_ : this->in_be_stream_;
+      uxr_buffer_request_data(&this->session_, this->out_stream_, p.reader->reader_id, in, &dc);
       ESP_LOGI(TAG, "Subscribed: %s (%s)", p.reader->topic.c_str(), p.reader->type->name);
     } else if (p.writer != nullptr) {
       p.writer->created = true;
@@ -459,7 +484,6 @@ bool XrceDdsComponent::create_writer_(WriterEntry &entry) {
 
 bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *type,
                                  ros2::SampleCallback cb, const ros2::MiddlewareOptions *opts) {
-  (void) opts;
   if (type == nullptr)
     return false;
   if (!topic_fits(topic)) {
@@ -469,6 +493,7 @@ bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *
   if (ReaderEntry *e = this->find_reader_(topic)) {
     e->cb = std::move(cb);
     e->type = type;
+    e->reliable = opts == nullptr || opts->reliable;
     return true;
   }
   if (!this->topic_allowed_(topic)) {
@@ -482,6 +507,7 @@ bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *
   e.topic = topic;
   e.type = type;
   e.cb = std::move(cb);
+  e.reliable = opts == nullptr || opts->reliable;
   if (this->link_ == LinkState::LINK_UP)
     this->create_reader_(e);
   return true;
@@ -490,7 +516,6 @@ bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *
 bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *type,
                                const void *sample, size_t len,
                                const ros2::MiddlewareOptions *opts) {
-  (void) opts;
   if (type == nullptr || sample == nullptr)
     return false;
   if (!topic_fits(topic)) {
@@ -502,37 +527,48 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
   WriterEntry *w = this->find_writer_(topic);
   if (w == nullptr) {
     if (!this->topic_allowed_(topic)) {
+      this->tx_fail_++;
       return false;
     }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
       ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
+      this->tx_fail_++;
       return false;
     }
     WriterEntry &e = this->writers_[this->num_writers_++];
     e.topic = topic;
     e.type = type;
+    e.reliable = opts == nullptr || opts->reliable;
     w = &e;
   }
-  if (!w->created && !this->create_writer_(*w))
+  if (!w->created && !this->create_writer_(*w)) {
+    this->tx_fail_++;
     return false;
+  }
   uint32_t size = this->codec_.size_of(type, sample, len);
   if (size == 0) {
     ESP_LOGW(TAG, "Unencodable sample for %s", topic.c_str());
+    this->tx_fail_++;
     return false;
   }
+  uxrStreamId out = w->reliable ? this->out_stream_ : this->out_be_stream_;
   ucdrBuffer ub;
-  if (uxr_prepare_output_stream(&this->session_, this->out_stream_, w->writer_id, &ub, size) ==
+  if (uxr_prepare_output_stream(&this->session_, out, w->writer_id, &ub, size) ==
       UXR_INVALID_REQUEST_ID) {
+    this->tx_fail_++;
     return false;
   }
   if (!this->codec_.serialize(&ub, type, sample, len) || ub.error) {
     ESP_LOGW(TAG, "XCDR encode failed for %s", topic.c_str());
+    this->tx_fail_++;
     return false;
   }
+  this->tx_ok_++;
   return true;
 }
 
-bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) {
+bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
+                                      const ros2::MiddlewareOptions *opts) {
   if (jpeg == nullptr || len == 0)
     return false;
   if (!topic_fits(topic)) {
@@ -547,38 +583,59 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   WriterEntry *w = this->find_writer_(topic);
   if (w == nullptr) {
     if (!this->topic_allowed_(topic)) {
+      this->tx_fail_++;
       return false;
     }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
       ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
+      this->tx_fail_++;
       return false;
     }
     WriterEntry &e = this->writers_[this->num_writers_++];
     e.topic = topic;
     e.type = type;
+    e.reliable = true;  // frames always use the fragmented reliable image stream
     w = &e;
   }
-  if (!w->created && !this->create_writer_(*w))
+  if (!w->created && !this->create_writer_(*w)) {
+    this->tx_fail_++;
     return false;
-  // CompressedImage members: header (zero stamp, empty frame_id — the
-  // bridge has no clock sync yet), format "jpeg", then the length-prefixed
+  }
+  // CompressedImage members: header (stamp/frame from opts when the bridge
+  // has clock sync, else zero/empty), format "jpeg", then the length-prefixed
   // raw bytes. The ub window is one MTU; ucdr drives image_flush per full
   // window, which pumps the session without blocking, so frames of any size
   // stream in one call and abort fast on congestion (history exhaustion
   // -> ub.error).
-  uint32_t total = 8 + (4 + 4 + 1) + (4 + 4 + 5) + 4 + (uint32_t) len;
+  int32_t sec = 0;
+  uint32_t nsec = 0;
+  const char *frame_id = "";
+  if (opts != nullptr) {
+    sec = opts->stamp_sec;
+    nsec = opts->stamp_nsec;
+    if (opts->frame_id != nullptr)
+      frame_id = opts->frame_id;
+  }
+  uint32_t total = 8;  // stamp sec + nanosec
+  total += (uint32_t) (ucdr_alignment(total, 4) + 4 + strlen(frame_id) + 1);
+  total += (uint32_t) (ucdr_alignment(total, 4) + 4 + 5);  // "jpeg" + NUL
+  total += (uint32_t) (ucdr_alignment(total, 4) + 4);      // data length
+  total += (uint32_t) len;
   ucdrBuffer ub;
   if (uxr_prepare_output_stream_fragmented(&this->session_, this->img_stream_, w->writer_id, &ub,
                                            total, image_flush, this) == UXR_INVALID_REQUEST_ID) {
+    this->tx_fail_++;
     return false;
   }
-  if (!ucdr_serialize_int32_t(&ub, 0) || !ucdr_serialize_uint32_t(&ub, 0) ||
-      !ucdr_serialize_string(&ub, "") || !ucdr_serialize_string(&ub, "jpeg") ||
+  if (!ucdr_serialize_int32_t(&ub, sec) || !ucdr_serialize_uint32_t(&ub, nsec) ||
+      !ucdr_serialize_string(&ub, frame_id) || !ucdr_serialize_string(&ub, "jpeg") ||
       !ucdr_serialize_uint32_t(&ub, (uint32_t) len) ||
       !ucdr_serialize_array_uint8_t(&ub, jpeg, len) || ub.error) {
     ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
+    this->tx_fail_++;
     return false;
   }
+  this->tx_ok_++;
   return true;
 }
 
@@ -600,6 +657,7 @@ void XrceDdsComponent::on_data_(uxrObjectId reader_id, ucdrBuffer *ub, uint16_t 
   if (e == nullptr || e->type == nullptr)
     return;
   this->last_rx_ = App.get_loop_component_start_time();
+  this->rx_count_++;
   if (this->codec_.deserialize(ub, e->type, this->sample_buf_, sizeof(this->sample_buf_)))
     e->cb(this->sample_buf_, e->type->size);
 }

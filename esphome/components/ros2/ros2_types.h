@@ -90,6 +90,39 @@ namespace esphome
       int32_t buttons[ROS2_MAX_JOY_BUTTONS]{0};
     };
 
+    // MCU projection of sensor_msgs/Range: radiation_type is ULTRASOUND (0)
+    // or INFRARED (1); variance 0 means unknown.
+    struct RangeMsg
+    {
+      HeaderMsg header;
+      uint8_t radiation_type{0};
+      float field_of_view{0.0f};
+      float min_range{0.0f};
+      float max_range{0.0f};
+      float range{0.0f};
+      float variance{0.0f};
+    };
+
+    // MCU projection of sensor_msgs/BatteryState. Unmeasured float fields
+    // use NaN per the IDL (voltage is mandatory). Cell arrays always publish
+    // empty; serial_number always publishes empty.
+    struct BatteryStateMsg
+    {
+      HeaderMsg header;
+      float voltage{0.0f};
+      float temperature{0.0f};
+      float current{0.0f};
+      float charge{0.0f};
+      float capacity{0.0f};
+      float design_capacity{0.0f};
+      float percentage{0.0f};
+      uint8_t power_supply_status{0};
+      uint8_t power_supply_health{0};
+      uint8_t power_supply_technology{0};
+      bool present{false};
+      char location[ROS2_NAME_LEN]{0};
+    };
+
     const TypeDef *find_type(const char *name);
     bool is_multi_joint_type(const TypeDef *type);
 

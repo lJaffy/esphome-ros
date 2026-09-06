@@ -124,6 +124,10 @@ const char *dds_type_suffix(const char *ros_name) {
     return "std_msgs::msg::dds_::ColorRGBA_";
   if (strcmp(ros_name, "sensor_msgs/Joy") == 0)
     return "sensor_msgs::msg::dds_::Joy_";
+  if (strcmp(ros_name, "sensor_msgs/Range") == 0)
+    return "sensor_msgs::msg::dds_::Range_";
+  if (strcmp(ros_name, "sensor_msgs/BatteryState") == 0)
+    return "sensor_msgs::msg::dds_::BatteryState_";
   if (strcmp(ros_name, "sensor_msgs/CompressedImage") == 0)
     return "sensor_msgs::msg::dds_::CompressedImage_";
   return "";
@@ -192,6 +196,27 @@ uint32_t XcdrCodec::size_of(const ros2::TypeDef *type, const void *sample, size_
     size += (uint32_t) (ucdr_alignment(size, 4) + 4 + (uint32_t) msg->num_buttons * 4);
     return size;
   }
+  if (strcmp(type->name, "sensor_msgs/Range") == 0 && len >= sizeof(ros2::RangeMsg)) {
+    auto *msg = static_cast<const ros2::RangeMsg *>(sample);
+    size = header_size(0, &msg->header);
+    size += 1;  // radiation_type
+    // field_of_view, min_range, max_range, range, variance.
+    size += (uint32_t) (ucdr_alignment(size, 4) + 4 * 5);
+    return size;
+  }
+  if (strcmp(type->name, "sensor_msgs/BatteryState") == 0 && len >= sizeof(ros2::BatteryStateMsg)) {
+    auto *msg = static_cast<const ros2::BatteryStateMsg *>(sample);
+    size = header_size(0, &msg->header);
+    // voltage, temperature, current, charge, capacity, design_capacity,
+    // percentage.
+    size += (uint32_t) (ucdr_alignment(size, 4) + 7 * 4);
+    size += 4;  // power_supply_status, health, technology, present
+    size += (uint32_t) (ucdr_alignment(size, 4) + 4);  // cell_voltage: empty
+    size += (uint32_t) (ucdr_alignment(size, 4) + 4);  // cell_temperature: empty
+    size = str_size(size, msg->location);
+    size = str_size(size, "");  // serial_number: empty
+    return size;
+  }
   return 0;
 }
 
@@ -254,6 +279,38 @@ bool XcdrCodec::serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void 
     // Subscribe-only on this bridge; no publish path serializes Joy.
     (void) ub;
     return false;
+  }
+  if (strcmp(type->name, "sensor_msgs/Range") == 0 && len >= sizeof(ros2::RangeMsg)) {
+    auto *msg = static_cast<const ros2::RangeMsg *>(sample);
+    if (!ser_header(ub, &msg->header))
+      return false;
+    if (!ucdr_serialize_uint8_t(ub, msg->radiation_type))
+      return false;
+    return ucdr_serialize_float(ub, msg->field_of_view) &&
+           ucdr_serialize_float(ub, msg->min_range) && ucdr_serialize_float(ub, msg->max_range) &&
+           ucdr_serialize_float(ub, msg->range) && ucdr_serialize_float(ub, msg->variance);
+  }
+  if (strcmp(type->name, "sensor_msgs/BatteryState") == 0 &&
+      len >= sizeof(ros2::BatteryStateMsg)) {
+    auto *msg = static_cast<const ros2::BatteryStateMsg *>(sample);
+    if (!ser_header(ub, &msg->header))
+      return false;
+    // NaN floats go out as NaN doubles, matching the IDL's unmeasured
+    // convention; cell arrays and serial_number publish empty.
+    if (!ucdr_serialize_float(ub, msg->voltage) || !ucdr_serialize_float(ub, msg->temperature) ||
+        !ucdr_serialize_float(ub, msg->current) || !ucdr_serialize_float(ub, msg->charge) ||
+        !ucdr_serialize_float(ub, msg->capacity) ||
+        !ucdr_serialize_float(ub, msg->design_capacity) ||
+        !ucdr_serialize_float(ub, msg->percentage))
+      return false;
+    if (!ucdr_serialize_uint8_t(ub, msg->power_supply_status) ||
+        !ucdr_serialize_uint8_t(ub, msg->power_supply_health) ||
+        !ucdr_serialize_uint8_t(ub, msg->power_supply_technology) ||
+        !ucdr_serialize_bool(ub, msg->present))
+      return false;
+    if (!ucdr_serialize_uint32_t(ub, 0) || !ucdr_serialize_uint32_t(ub, 0))
+      return false;
+    return ucdr_serialize_string(ub, msg->location) && ucdr_serialize_string(ub, "");
   }
   return false;
 }
@@ -341,6 +398,50 @@ bool XcdrCodec::deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out
       return false;
     msg->num_buttons = (uint8_t) nb;
     return true;
+  }
+  if (strcmp(type->name, "sensor_msgs/Range") == 0 && out_len >= sizeof(ros2::RangeMsg)) {
+    auto *msg = static_cast<ros2::RangeMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_header(ub, &msg->header))
+      return false;
+    return ucdr_deserialize_uint8_t(ub, &msg->radiation_type) &&
+           ucdr_deserialize_float(ub, &msg->field_of_view) &&
+           ucdr_deserialize_float(ub, &msg->min_range) &&
+           ucdr_deserialize_float(ub, &msg->max_range) && ucdr_deserialize_float(ub, &msg->range) &&
+           ucdr_deserialize_float(ub, &msg->variance);
+  }
+  if (strcmp(type->name, "sensor_msgs/BatteryState") == 0 &&
+      out_len >= sizeof(ros2::BatteryStateMsg)) {
+    auto *msg = static_cast<ros2::BatteryStateMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_header(ub, &msg->header))
+      return false;
+    if (!ucdr_deserialize_float(ub, &msg->voltage) ||
+        !ucdr_deserialize_float(ub, &msg->temperature) ||
+        !ucdr_deserialize_float(ub, &msg->current) || !ucdr_deserialize_float(ub, &msg->charge) ||
+        !ucdr_deserialize_float(ub, &msg->capacity) ||
+        !ucdr_deserialize_float(ub, &msg->design_capacity) ||
+        !ucdr_deserialize_float(ub, &msg->percentage))
+      return false;
+    if (!ucdr_deserialize_uint8_t(ub, &msg->power_supply_status) ||
+        !ucdr_deserialize_uint8_t(ub, &msg->power_supply_health) ||
+        !ucdr_deserialize_uint8_t(ub, &msg->power_supply_technology) ||
+        !ucdr_deserialize_bool(ub, &msg->present))
+      return false;
+    // The bridge keeps no cell storage, so inbound cell data is rejected
+    // instead of overflowing the fixed struct.
+    uint32_t n = 0;
+    ucdrBuffer probe = *ub;
+    if (!ucdr_deserialize_uint32_t(&probe, &n) || n != 0)
+      return false;
+    *ub = probe;
+    probe = *ub;
+    if (!ucdr_deserialize_uint32_t(&probe, &n) || n != 0)
+      return false;
+    *ub = probe;
+    char serial[ros2::ROS2_NAME_LEN];
+    return ucdr_deserialize_string(ub, msg->location, sizeof(msg->location)) &&
+           ucdr_deserialize_string(ub, serial, sizeof(serial));
   }
   return false;
 }

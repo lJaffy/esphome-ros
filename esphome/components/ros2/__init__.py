@@ -1,4 +1,5 @@
 import math
+import re
 
 import esphome.codegen as cg
 from esphome.components import binary_sensor as bs_comp
@@ -7,8 +8,9 @@ from esphome.components.light import LightState
 from esphome.components.sensor import Sensor
 from esphome.components.servo import Servo
 from esphome.components.switch import Switch
+from esphome.components import time as time_comp
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_INTERVAL, CONF_TOPIC, CONF_TYPE
+from esphome.const import CONF_ID, CONF_INTERVAL, CONF_TIME_ID, CONF_TOPIC, CONF_TYPE
 from esphome.types import ConfigType
 
 
@@ -60,6 +62,18 @@ CONF_JOINT_NAME = "joint_name"
 CONF_MIN_RAD = "min_rad"
 CONF_MAX_RAD = "max_rad"
 CONF_FIELD = "field"
+CONF_QOS = "qos"
+CONF_FRAME_ID = "frame_id"
+CONF_RADIATION_TYPE = "radiation_type"
+CONF_FIELD_OF_VIEW = "field_of_view"
+CONF_MIN_RANGE = "min_range"
+CONF_MAX_RANGE = "max_range"
+CONF_VARIANCE = "variance"
+CONF_MIN_VOLTAGE = "min_voltage"
+CONF_MAX_VOLTAGE = "max_voltage"
+CONF_DESIGN_CAPACITY = "design_capacity"
+CONF_TECHNOLOGY = "technology"
+CONF_LOCATION = "location"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -78,7 +92,43 @@ LIGHT_TYPES = [
 IMAGE_TYPES = [
     "sensor_msgs/CompressedImage",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES
+TELEMETRY_TYPES = [
+    "sensor_msgs/Range",
+    "sensor_msgs/BatteryState",
+]
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES
+
+# Types with std_msgs/Header: stamp comes from the time: source, frame_id
+# from each publication's frame_id:.
+HEADER_TYPES = [
+    "sensor_msgs/JointState",
+    "trajectory_msgs/JointTrajectory",
+    "sensor_msgs/Joy",
+    "sensor_msgs/CompressedImage",
+    "sensor_msgs/Range",
+    "sensor_msgs/BatteryState",
+]
+
+QOS_LEVELS = ["reliable", "best_effort"]
+
+RADIATION_TYPES = {"ultrasound": 0, "infrared": 1}
+
+BATTERY_TECHNOLOGIES = {
+    "unknown": 0,
+    "nimh": 1,
+    "lion": 2,
+    "lipo": 3,
+    "life": 4,
+    "nicd": 5,
+    "limn": 6,
+    "ternary": 7,
+    "vrla": 8,
+}
+
+RANGE_PARAMS = (CONF_RADIATION_TYPE, CONF_FIELD_OF_VIEW, CONF_MIN_RANGE, CONF_MAX_RANGE, CONF_VARIANCE)
+BATTERY_PARAMS = (
+    CONF_MIN_VOLTAGE, CONF_MAX_VOLTAGE, CONF_DESIGN_CAPACITY, CONF_TECHNOLOGY, CONF_LOCATION,
+)
 
 # Codec-complete (JSON + XCDR + parity) but with no entity mapping yet:
 # dispatch and poll silently ignore these, so validation rejects them loudly
@@ -89,6 +139,19 @@ UNMAPPED_TYPES = [
 ]
 
 LIGHT_FIELDS = ["rgb", "brightness"]
+
+_FRAME_ID_RE = re.compile(r"^[A-Za-z0-9/_-]*$")
+
+
+def _frame_id(value):
+    value = cv.string(value)
+    if not _FRAME_ID_RE.match(value):
+        raise cv.Invalid(
+            "frame_id: may only contain A-Za-z0-9/_- "
+            "(the hand-encoded image JSON has no string escaper)")
+    if len(value) >= 64:
+        raise cv.Invalid("frame_id: must fit in 63 chars + NUL")
+    return value
 
 
 def _entity_ref(entity_cls):
@@ -162,6 +225,9 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
         raise cv.Invalid(
             f"Type {type_} is schema-reserved: codec exists but no "
             "target: entity mapping yet")
+    if type_ in TELEMETRY_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is publish-only (no target: entity consumes it)")
     if type_ in MULTI_JOINT_TYPES and not has_targets:
         raise cv.Invalid(f"Type {type_} requires targets: (plural)")
     if type_ not in MULTI_JOINT_TYPES and has_targets:
@@ -205,6 +271,7 @@ SUBSCRIPTION_SCHEMA = cv.All(
             cv.Optional(CONF_TARGETS): cv.ensure_list(
                 cv.Schema({cv.Required("servo"): _servo_target_schema()})
             ),
+            cv.Optional(CONF_QOS): cv.one_of(*QOS_LEVELS),
         }
     ),
     _validate_subscription,
@@ -232,8 +299,13 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         if len(kinds) != 1:
             raise cv.Invalid(
                 "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:")
-        if "sensor" in kinds and type_ != "std_msgs/Float32":
-            raise cv.Invalid("sensor: sources need std_msgs/Float32")
+        if "sensor" in kinds and type_ not in ("std_msgs/Float32", *TELEMETRY_TYPES):
+            raise cv.Invalid(
+                "sensor: sources need std_msgs/Float32, sensor_msgs/Range, "
+                "or sensor_msgs/BatteryState")
+        if type_ in TELEMETRY_TYPES and "sensor" not in kinds:
+            raise cv.Invalid(
+                f"Type {type_} needs a sensor: source (single distance/voltage sensor)")
         if ("switch" in kinds or "binary_sensor" in kinds) and type_ != "std_msgs/Bool":
             raise cv.Invalid(
                 "switch:/binary_sensor: sources need std_msgs/Bool")
@@ -243,6 +315,21 @@ def _validate_publication(config: ConfigType) -> ConfigType:
             raise cv.Invalid("light: sources need std_msgs/ColorRGBA")
     if type_ == "sensor_msgs/Joy" and has_source:
         raise cv.Invalid("sensor_msgs/Joy is subscribe-only (no source entity produces axes/buttons)")
+    if CONF_FRAME_ID in config and type_ not in HEADER_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} has no header; frame_id: needs one of {HEADER_TYPES}")
+    for key in RANGE_PARAMS:
+        if key in config and type_ != "sensor_msgs/Range":
+            raise cv.Invalid(f"{key}: only valid with sensor_msgs/Range")
+    for key in BATTERY_PARAMS:
+        if key in config and type_ != "sensor_msgs/BatteryState":
+            raise cv.Invalid(f"{key}: only valid with sensor_msgs/BatteryState")
+    if CONF_MIN_RANGE in config or CONF_MAX_RANGE in config:
+        if config.get(CONF_MIN_RANGE, 0.0) > config.get(CONF_MAX_RANGE, 0.0):
+            raise cv.Invalid("min_range: must not exceed max_range:")
+    if CONF_MIN_VOLTAGE in config or CONF_MAX_VOLTAGE in config:
+        if config.get(CONF_MIN_VOLTAGE, 0.0) >= config.get(CONF_MAX_VOLTAGE, 0.0):
+            raise cv.Invalid("min_voltage: must be below max_voltage:")
     return config
 
 
@@ -256,6 +343,18 @@ PUBLICATION_SCHEMA = cv.All(
                 cv.Schema({cv.Required("servo"): _servo_target_schema()})
             ),
             cv.Optional(CONF_INTERVAL): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_FRAME_ID): _frame_id,
+            cv.Optional(CONF_QOS): cv.one_of(*QOS_LEVELS),
+            cv.Optional(CONF_RADIATION_TYPE): cv.one_of(*RADIATION_TYPES),
+            cv.Optional(CONF_FIELD_OF_VIEW): cv.float_,
+            cv.Optional(CONF_MIN_RANGE): cv.float_,
+            cv.Optional(CONF_MAX_RANGE): cv.float_,
+            cv.Optional(CONF_VARIANCE): cv.float_,
+            cv.Optional(CONF_MIN_VOLTAGE): cv.float_,
+            cv.Optional(CONF_MAX_VOLTAGE): cv.float_,
+            cv.Optional(CONF_DESIGN_CAPACITY): cv.float_,
+            cv.Optional(CONF_TECHNOLOGY): cv.one_of(*BATTERY_TECHNOLOGIES),
+            cv.Optional(CONF_LOCATION): cv.string,
         }
     ),
     _validate_publication,
@@ -269,6 +368,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SUBSCRIPTIONS, default=[]): cv.ensure_list(SUBSCRIPTION_SCHEMA),
         cv.Optional(CONF_PUBLICATIONS, default=[]): cv.ensure_list(PUBLICATION_SCHEMA),
         cv.Optional(CONF_STATUS_SENSOR): bs_comp.binary_sensor_schema(BinarySensor),
+        cv.GenerateID(CONF_TIME_ID): cv.use_id(time_comp.RealTimeClock),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -279,6 +379,9 @@ async def to_code(config: ConfigType) -> None:
     cg.add(var.set_middleware_name(config[CONF_MIDDLEWARE]))
     cg.add(var.set_default_publish_interval(
         config[CONF_DEFAULT_PUBLISH_INTERVAL]))
+    if (time_id := config.get(CONF_TIME_ID)) is not None:
+        time_var = await cg.get_variable(time_id)
+        cg.add(var.set_time(time_var))
 
     for sub in config[CONF_SUBSCRIPTIONS]:
         topic = sub[CONF_TOPIC]
@@ -303,6 +406,8 @@ async def to_code(config: ConfigType) -> None:
                         topic, type_, ent, servo[CONF_JOINT_NAME], servo[CONF_MIN_RAD], servo[CONF_MAX_RAD]
                     )
                 )
+        if (qos := sub.get(CONF_QOS)) is not None:
+            cg.add(var.set_subscription_qos(topic, qos))
 
     for pub in config[CONF_PUBLICATIONS]:
         topic = pub[CONF_TOPIC]
@@ -312,7 +417,12 @@ async def to_code(config: ConfigType) -> None:
         if (source := pub.get(CONF_SOURCE)) is not None:
             if (sens := source.get("sensor")) is not None:
                 ent = await cg.get_variable(sens[CONF_ID])
-                cg.add(var.add_sensor_publication(topic, type_, ent, interval))
+                if type_ == "sensor_msgs/Range":
+                    cg.add(var.add_range_publication(topic, ent, interval))
+                elif type_ == "sensor_msgs/BatteryState":
+                    cg.add(var.add_battery_publication(topic, ent, interval))
+                else:
+                    cg.add(var.add_sensor_publication(topic, type_, ent, interval))
             elif (sw := source.get("switch")) is not None:
                 ent = await cg.get_variable(sw[CONF_ID])
                 cg.add(var.add_switch_publication(topic, type_, ent, interval))
@@ -335,6 +445,28 @@ async def to_code(config: ConfigType) -> None:
                     var.add_joint_state_source(ent, servo[CONF_JOINT_NAME], servo[CONF_MIN_RAD],
                                                servo[CONF_MAX_RAD])
                 )
+        if (qos := pub.get(CONF_QOS)) is not None:
+            cg.add(var.set_publication_qos(topic, qos))
+        if (frame_id := pub.get(CONF_FRAME_ID)) is not None:
+            cg.add(var.set_publication_frame_id(topic, frame_id))
+        if type_ == "sensor_msgs/Range":
+            cg.add(var.set_range_params(
+                topic,
+                RADIATION_TYPES[pub.get(CONF_RADIATION_TYPE, "ultrasound")],
+                pub.get(CONF_FIELD_OF_VIEW, 0.5),
+                pub.get(CONF_MIN_RANGE, 0.02),
+                pub.get(CONF_MAX_RANGE, 4.0),
+                pub.get(CONF_VARIANCE, 0.0),
+            ))
+        elif type_ == "sensor_msgs/BatteryState":
+            cg.add(var.set_battery_params(
+                topic,
+                pub.get(CONF_MIN_VOLTAGE, 3.0),
+                pub.get(CONF_MAX_VOLTAGE, 4.2),
+                pub.get(CONF_DESIGN_CAPACITY, 0.0),
+                BATTERY_TECHNOLOGIES[pub.get(CONF_TECHNOLOGY, "unknown")],
+                pub.get(CONF_LOCATION, ""),
+            ))
 
     if (status := config.get(CONF_STATUS_SENSOR)) is not None:
         sens = await bs_comp.new_binary_sensor(status)

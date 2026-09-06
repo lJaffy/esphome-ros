@@ -26,12 +26,15 @@ class Ros2MqttComponent : public Component, public mqtt::CustomMQTTDevice, publi
                  const ros2::MiddlewareOptions *opts = nullptr) override;
   bool publish(const std::string &topic, const ros2::TypeDef *type, const void *sample, size_t len,
                const ros2::MiddlewareOptions *opts = nullptr) override;
-  bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) override;
+  bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
+                     const ros2::MiddlewareOptions *opts = nullptr) override;
   bool connected() const override;
   const char *name() const override { return "mqtt"; }
 
  protected:
   std::string expand_prefix_(const std::string &topic) const;
+  // Explicit qos: from YAML wins; otherwise the component default_qos_.
+  uint8_t effective_qos_(const ros2::MiddlewareOptions *opts) const;
 
   std::string prefix_;
   uint8_t default_qos_{0};

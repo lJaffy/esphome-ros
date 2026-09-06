@@ -23,13 +23,32 @@ Scope: `esphome/components/xrce_dds/*`, `examples/*.yaml`, `tests/test_xrce_dds_
 - Tests: `python -m pytest tests/ -v` green; `esphome config` on all 4 examples green.
 - Exit: clean `git status`, reproducible baseline.
 
-## Phase 1 — Data-plane correctness
-Scope: `ros2/__init__.py`, `ros2_types.h/.cpp`, `ros2_json.cpp`, `xrce_dds_codec.cpp`, `test_ros2_msg_parity.py`, examples.
-- Time sync: SNTP → `builtin_interfaces/Time`; set `header.stamp`/`frame_id` on `JointState`, `CompressedImage` (today `0`/`""`). Subscribe `/clock` optional.
-- New types in schema+struct+both codecs+parity: `geometry_msgs/Twist` (diff-drive in), `nav_msgs/Odometry` + `tf2_msgs/TFMessage` (odom/TF out), `sensor_msgs/{Imu,Range,BatteryState}`.
-- Reliability: `last_rx_` liveliness timeout (fix blackhole gap), per-topic reliable/best-effort (today fixed XML), keep `MTU 512 × history 4` authoritative, `max_packet_length` warn-only.
-- Docs: QoS/drop policy, `float64[]↔float[]`, name maps (`/x→rt/x`, `pkg/Type→pkg::msg::dds_::Type_`).
-- Exit: RViz TF-validated rover (`cmd_vel` in, `odom`+TF out); parity green.
+## Phase 1a — data-plane correctness: time, telemetry, QoS (done)
+Scope: `ros2/__init__.py`, `ros2_types.h/.cpp`, `ros2_json.cpp`, `xrce_dds_codec.cpp`,
+`ros2_mqtt`, `xrce_dds_component`, parity + schema tests, `examples/sensor_telemetry.yaml`.
+- Time sync: optional `ros2.time: sntp_time` (`time::RealTimeClock`, inline `utcnow()`
+  so no link dependency); stamps `JointState`/`Range`/`BatteryState`/`CompressedImage`
+  (nanosec 0 — ESPTime has no sub-second field; zeros when unset/unsynced). Per-publication
+  `frame_id:` (header types only, `[A-Za-z0-9/_-]` whitelist for the hand-encoded image JSON).
+- New types `sensor_msgs/Range` (sensor + geometry opts) and `sensor_msgs/BatteryState`
+  (voltage sensor + min/max percentage map, NaN for unmeasured, empty cell arrays/serial),
+  publish-only (rejected as subscriptions, mirroring `Joy`). Schema + struct + both codecs +
+  parity + `sensor_telemetry.yaml`.
+- QoS: per-sub/pub `qos: reliable|best_effort` (default reliable = old behavior). MQTT maps
+  explicit reliable→1/best_effort→0, unset keeps `default_qos`. XRCE-DDS creates BEST_EFFORT
+  endpoints on dedicated best-effort streams (+2 kB static) with BEST_EFFORT endpoint QoS XML;
+  images always stay reliable. Agent rejection of the dialect fails loudly.
+- Reliability visibility (no behavior change): cumulative TX ok/fail + RX counters and last-RX
+  age in `dump_config`; blackhole-agent gap still open (needs Phase 2 worker + ping design).
+- Exit: `pytest tests/ -v` green, `esphome config` on all 5 examples green.
+
+## Phase 1b — rover stack: Twist, Odometry, TF (next)
+- `geometry_msgs/Twist` subscribe → diff-drive target (left/right servos + wheel separation +
+  speed scales; open-loop velocity documented).
+- `nav_msgs/Odometry` publish → dead-reckoning integrator (commanded-velocity based, `frame_id`/
+  `child_frame_id` opts) + `tf2_msgs/TFMessage` (static transforms + odom→base_link bundling).
+- `sensor_msgs/Imu` publish → multi-sensor source (accel/gyro refs).
+- Exit: RViz TF-validated rover (`cmd_vel` in, `odom`+TF out).
 
 ## Phase 2 — Concurrency foundation (no new ROS features)
 Scope: `xrce_dds_component.h/cpp` (worker owns all `uxr_*`); `ros2_component.cpp` only gains queue drain.

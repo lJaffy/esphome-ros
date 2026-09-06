@@ -17,6 +17,15 @@ struct TypeDef {
 struct MiddlewareOptions {
   const char *key = nullptr;
   const char *value = nullptr;
+  // Sample stamp/frame for transports that build headers without a struct
+  // (image payloads). Struct-carried samples already embed HeaderMsg.
+  int32_t stamp_sec{0};
+  uint32_t stamp_nsec{0};
+  const char *frame_id{""};
+  // Reliability: true (default) keeps current behavior everywhere. Explicit
+  // best_effort selects qos 0 on MQTT and BEST_EFFORT DDS endpoints.
+  bool reliable{true};
+  bool qos_explicit{false};
 };
 
 using SampleCallback = std::function<void(const void *sample, size_t len)>;
@@ -31,10 +40,12 @@ class Ros2Middleware {
                        const MiddlewareOptions *opts = nullptr) = 0;
   // Publish a variable-length binary payload (e.g. JPEG frame) that has no
   // fixed-size sample struct. Default refuses; transports override as needed.
-  virtual bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) {
+  virtual bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
+                             const MiddlewareOptions *opts = nullptr) {
     (void) topic;
     (void) jpeg;
     (void) len;
+    (void) opts;
     return false;
   }
   virtual bool connected() const = 0;

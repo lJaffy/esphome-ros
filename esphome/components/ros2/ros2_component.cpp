@@ -1,5 +1,6 @@
 #include "ros2_component.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "esphome/core/application.h"
@@ -68,8 +69,47 @@ namespace esphome
     {
       if (this->mw_ == nullptr)
         return;
-      if (!this->mw_->publish_image(pub.topic, jpeg, len))
+      MiddlewareOptions opts;
+      opts.reliable = pub.reliable;
+      opts.qos_explicit = pub.qos_explicit;
+      opts.frame_id = pub.frame_id;
+      if (this->time_ != nullptr)
+      {
+        ESPTime t = this->time_->utcnow();
+        if (t.is_valid())
+        {
+          opts.stamp_sec = (int32_t) t.timestamp;
+          opts.stamp_nsec = 0;
+        }
+      }
+      if (!this->mw_->publish_image(pub.topic, jpeg, len, &opts))
         ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", pub.topic.c_str(), (unsigned) len);
+    }
+
+    void Ros2Component::fill_header_(HeaderMsg &header, const char *frame_id)
+    {
+      if (this->time_ != nullptr)
+      {
+        ESPTime t = this->time_->utcnow();
+        if (t.is_valid())
+        {
+          header.stamp_sec = (int32_t) t.timestamp;
+          header.stamp_nsec = 0;
+        }
+      }
+      if (frame_id != nullptr)
+      {
+        strncpy(header.frame_id, frame_id, ROS2_FRAME_ID_LEN - 1);
+        header.frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+      }
+    }
+
+    void Ros2Component::apply_qos_(bool &reliable, bool &explicit_out, const char *qos)
+    {
+      if (qos == nullptr || *qos == '\0')
+        return;
+      explicit_out = true;
+      reliable = strcmp(qos, "best_effort") != 0;
     }
 
     void Ros2Component::try_subscribe_()
@@ -95,6 +135,9 @@ namespace esphome
         const Subscription &sub = this->subs_[i];
         if (sub.type == nullptr)
           continue;
+        MiddlewareOptions opts;
+        opts.reliable = sub.reliable;
+        opts.qos_explicit = sub.qos_explicit;
         this->mw_->subscribe(
             sub.topic, sub.type,
             [this, i](const void *sample, size_t len)
@@ -118,7 +161,8 @@ namespace esphome
               {
                 this->dispatch_light_(s, p);
               }
-            });
+            },
+            &opts);
         ESP_LOGI(TAG, "Subscribed: %s (%s)", sub.topic.c_str(), sub.type->name);
       }
       this->subscribed_ = true;
@@ -765,6 +809,138 @@ namespace esphome
 #endif
     }
 
+    void Ros2Component::set_subscription_qos(const char *topic, const char *qos)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_subs_; i++)
+      {
+        if (this->subs_[i].topic == topic)
+          apply_qos_(this->subs_[i].reliable, this->subs_[i].qos_explicit, qos);
+      }
+    }
+
+    void Ros2Component::set_publication_qos(const char *topic, const char *qos)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+          apply_qos_(this->pubs_[i].reliable, this->pubs_[i].qos_explicit, qos);
+      }
+    }
+
+    void Ros2Component::set_publication_frame_id(const char *topic, const char *frame_id)
+    {
+      if (topic == nullptr || frame_id == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+        {
+          strncpy(this->pubs_[i].frame_id, frame_id, ROS2_FRAME_ID_LEN - 1);
+          this->pubs_[i].frame_id[ROS2_FRAME_ID_LEN - 1] = '\0';
+        }
+      }
+    }
+
+    void Ros2Component::set_range_params(const char *topic, uint8_t radiation_type, float field_of_view,
+                                         float min_range, float max_range, float variance)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+        {
+          this->pubs_[i].radiation_type = radiation_type;
+          this->pubs_[i].field_of_view = field_of_view;
+          this->pubs_[i].min_range = min_range;
+          this->pubs_[i].max_range = max_range;
+          this->pubs_[i].range_variance = variance;
+        }
+      }
+    }
+
+    void Ros2Component::set_battery_params(const char *topic, float min_voltage, float max_voltage,
+                                           float design_capacity, uint8_t technology, const char *location)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+        {
+          this->pubs_[i].min_voltage = min_voltage;
+          this->pubs_[i].max_voltage = max_voltage;
+          this->pubs_[i].design_capacity = design_capacity;
+          this->pubs_[i].battery_technology = technology;
+          if (location != nullptr)
+          {
+            strncpy(this->pubs_[i].battery_location, location, ROS2_NAME_LEN - 1);
+            this->pubs_[i].battery_location[ROS2_NAME_LEN - 1] = '\0';
+          }
+        }
+      }
+    }
+
+    uint8_t Ros2Component::add_range_publication(const char *topic, sensor::Sensor *sensor, uint32_t interval_ms)
+    {
+#ifndef USE_SENSOR
+      (void) topic;
+      (void) sensor;
+      (void) interval_ms;
+      ESP_LOGE(TAG, "sensor support not compiled in");
+      return 255;
+#else
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("sensor_msgs/Range");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::SENSOR_SINGLE;
+      pub.sensor = sensor;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+#endif
+    }
+
+    uint8_t Ros2Component::add_battery_publication(const char *topic, sensor::Sensor *sensor, uint32_t interval_ms)
+    {
+#ifndef USE_SENSOR
+      (void) topic;
+      (void) sensor;
+      (void) interval_ms;
+      ESP_LOGE(TAG, "sensor support not compiled in");
+      return 255;
+#else
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("sensor_msgs/BatteryState");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::SENSOR_SINGLE;
+      pub.sensor = sensor;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+#endif
+    }
+
     void Ros2Component::poll_publication_(Publication &pub)
     {
       if (this->mw_ == nullptr || !this->mw_->connected())
@@ -777,6 +953,9 @@ namespace esphome
       pub.last_pub = now;
       if (pub.type == nullptr)
         return;
+      MiddlewareOptions opts;
+      opts.reliable = pub.reliable;
+      opts.qos_explicit = pub.qos_explicit;
       if (strcmp(pub.type->name, "std_msgs/Float32") == 0)
       {
 #ifdef USE_SENSOR
@@ -784,7 +963,7 @@ namespace esphome
           return;
         Float32Msg msg;
         msg.data = pub.sensor->state;
-        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
       }
       else if (strcmp(pub.type->name, "std_msgs/Bool") == 0)
@@ -807,12 +986,13 @@ namespace esphome
         }
 #endif
         if (have)
-          this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+          this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
       }
       else if (strcmp(pub.type->name, "sensor_msgs/JointState") == 0)
       {
         JointStateMsg msg;
         memset(&msg, 0, sizeof(msg));
+        this->fill_header_(msg.header, pub.frame_id);
         uint8_t n = pub.num_joints > ROS2_MAX_JOINTS ? ROS2_MAX_JOINTS : pub.num_joints;
         msg.num_joints = n;
         for (uint8_t i = 0; i < n; i++)
@@ -821,7 +1001,60 @@ namespace esphome
           float level = pub.joints[i].servo != nullptr ? this->recalled_level_(pub.joints[i].servo) : 0.0f;
           msg.position[i] = level_to_rad_(level, pub.joints[i].min_rad, pub.joints[i].max_rad);
         }
-        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+      }
+      else if (strcmp(pub.type->name, "sensor_msgs/Range") == 0)
+      {
+#ifdef USE_SENSOR
+        if (pub.sensor == nullptr || !pub.sensor->has_state())
+          return;
+        RangeMsg msg;
+        memset(&msg, 0, sizeof(msg));
+        this->fill_header_(msg.header, pub.frame_id);
+        msg.radiation_type = pub.radiation_type;
+        msg.field_of_view = pub.field_of_view;
+        msg.min_range = pub.min_range;
+        msg.max_range = pub.max_range;
+        msg.range = pub.sensor->state;
+        msg.variance = pub.range_variance;
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+#endif
+      }
+      else if (strcmp(pub.type->name, "sensor_msgs/BatteryState") == 0)
+      {
+#ifdef USE_SENSOR
+        if (pub.sensor == nullptr || !pub.sensor->has_state())
+          return;
+        BatteryStateMsg msg;
+        memset(&msg, 0, sizeof(msg));
+        this->fill_header_(msg.header, pub.frame_id);
+        const float volts = pub.sensor->state;
+        msg.voltage = volts;
+        msg.temperature = NAN;
+        msg.current = NAN;
+        msg.charge = NAN;
+        msg.capacity = NAN;
+        msg.design_capacity = pub.design_capacity > 0.0f ? pub.design_capacity : NAN;
+        if (pub.max_voltage > pub.min_voltage)
+        {
+          float pct = (volts - pub.min_voltage) / (pub.max_voltage - pub.min_voltage);
+          if (pct < 0.0f)
+            pct = 0.0f;
+          if (pct > 1.0f)
+            pct = 1.0f;
+          msg.percentage = pct;
+        }
+        else
+        {
+          msg.percentage = NAN;
+        }
+        msg.power_supply_status = 0;  // UNKNOWN: the bridge cannot see the charger
+        msg.power_supply_health = 0;  // UNKNOWN
+        msg.power_supply_technology = pub.battery_technology;
+        msg.present = true;
+        strncpy(msg.location, pub.battery_location, ROS2_NAME_LEN - 1);
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+#endif
       }
       else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
       {
@@ -840,7 +1073,7 @@ namespace esphome
           msg.b = pub.light->remote_values.get_blue();
           msg.a = pub.light->remote_values.get_brightness();
         }
-        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg));
+        this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
       }
     }

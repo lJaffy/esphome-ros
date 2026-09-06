@@ -44,6 +44,7 @@ struct ReaderEntry {
   std::string topic;
   const ros2::TypeDef *type{nullptr};
   ros2::SampleCallback cb;
+  bool reliable{true};
   uxrObjectId topic_id{};
   uxrObjectId reader_id{};
   bool created{false};
@@ -52,6 +53,7 @@ struct ReaderEntry {
 struct WriterEntry {
   std::string topic;
   const ros2::TypeDef *type{nullptr};
+  bool reliable{true};
   uxrObjectId topic_id{};
   uxrObjectId writer_id{};
   bool created{false};
@@ -84,7 +86,8 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
                  const ros2::MiddlewareOptions *opts = nullptr) override;
   bool publish(const std::string &topic, const ros2::TypeDef *type, const void *sample, size_t len,
                const ros2::MiddlewareOptions *opts = nullptr) override;
-  bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) override;
+  bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
+                     const ros2::MiddlewareOptions *opts = nullptr) override;
   bool connected() const override { return this->link_ == LinkState::LINK_UP; }
   const char *name() const override { return "xrce_dds"; }
 
@@ -136,6 +139,10 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uxrStreamId out_stream_{};
   uxrStreamId in_stream_{};
   uxrStreamId img_stream_{};
+  // Best-effort pair for qos: best_effort endpoints. Default client profile
+  // allows exactly one of each; images always stay on img_stream_.
+  uxrStreamId out_be_stream_{};
+  uxrStreamId in_be_stream_{};
   uxrObjectId participant_id_{};
   uxrObjectId publisher_id_{};
   uxrObjectId subscriber_id_{};
@@ -154,9 +161,14 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
 
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> in_buf_{};
+  std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_be_buf_{};
   std::array<uint8_t, UXR_CONFIG_CUSTOM_TRANSPORT_MTU> img_buf_{};
   // Single-threaded main loop: one shared scratch sample, no per-message heap.
   uint8_t sample_buf_[sizeof(ros2::JointTrajectoryMsg)]{0};
+  // Cumulative transport counters (never reset; integrity signal for HIL).
+  uint32_t tx_ok_{0};
+  uint32_t tx_fail_{0};
+  uint32_t rx_count_{0};
 };
 
 }  // namespace xrce_dds

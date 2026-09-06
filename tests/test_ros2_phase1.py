@@ -171,6 +171,102 @@ def test_unmapped_pub_types_rejected(ros2):
             )
 
 
+def test_telemetry_types_publish_only(ros2):
+    for t in ("sensor_msgs/Range", "sensor_msgs/BatteryState"):
+        with pytest.raises(Exception):
+            ros2.SUBSCRIPTION_SCHEMA(
+                {"topic": "/x", "type": t,
+                 "target": {"switch": {"id": "s"}}}
+            )
+
+
+def test_telemetry_types_accept_sensor_source(ros2):
+    for t in ("sensor_msgs/Range", "sensor_msgs/BatteryState"):
+        cfg = ros2.PUBLICATION_SCHEMA(
+            {"topic": "/x", "type": t,
+             "source": {"sensor": {"id": "s"}}}
+        )
+        assert cfg["type"] == t
+
+
+def test_telemetry_types_reject_non_sensor_source(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/x", "type": "sensor_msgs/Range",
+             "source": {"switch": {"id": "s"}}}
+        )
+
+
+def test_supported_types_cover_telemetry(ros2):
+    for t in ("sensor_msgs/Range", "sensor_msgs/BatteryState"):
+        assert t in ros2.SUPPORTED_TYPES
+
+
+def test_frame_id_rejected_without_header(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, frame_id="base_link")
+
+
+def test_frame_id_accepted_with_header(ros2):
+    cfg = _pub(ros2, type="sensor_msgs/Range",
+               source={"sensor": {"id": "s"}}, frame_id="sonar")
+    assert cfg["frame_id"] == "sonar"
+
+
+def test_frame_id_charset_rejected(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="sensor_msgs/Range",
+             source={"sensor": {"id": "s"}}, frame_id='a"b')
+
+
+def test_range_params_rejected_off_type(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, min_range=0.1)
+
+
+def test_battery_params_rejected_off_type(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, min_voltage=3.0)
+
+
+def test_range_bounds_validated(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/x", "type": "sensor_msgs/Range",
+             "source": {"sensor": {"id": "s"}},
+             "min_range": 5.0, "max_range": 1.0}
+        )
+
+
+def test_battery_bounds_validated(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/x", "type": "sensor_msgs/BatteryState",
+             "source": {"sensor": {"id": "s"}},
+             "min_voltage": 4.2, "max_voltage": 3.0}
+        )
+
+
+def test_qos_accepted_on_sub_and_pub(ros2):
+    cfg = ros2.SUBSCRIPTION_SCHEMA(
+        {"topic": "/cmd", "type": "std_msgs/ColorRGBA",
+         "target": {"light": {"id": "lamp"}}, "qos": "best_effort"}
+    )
+    assert cfg["qos"] == "best_effort"
+    cfg = _pub(ros2, type="sensor_msgs/Range",
+               source={"sensor": {"id": "s"}}, qos="best_effort")
+    assert cfg["qos"] == "best_effort"
+
+
+def test_qos_rejects_unknown_level(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, qos="sometimes")
+
+
 def test_auto_load_full_without_config(ros2):
     libs = ros2._auto_load()
     for lib in ("json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"):
