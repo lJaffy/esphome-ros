@@ -368,7 +368,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SUBSCRIPTIONS, default=[]): cv.ensure_list(SUBSCRIPTION_SCHEMA),
         cv.Optional(CONF_PUBLICATIONS, default=[]): cv.ensure_list(PUBLICATION_SCHEMA),
         cv.Optional(CONF_STATUS_SENSOR): bs_comp.binary_sensor_schema(BinarySensor),
-        cv.GenerateID(CONF_TIME_ID): cv.use_id(time_comp.RealTimeClock),
+        cv.Optional(CONF_TIME_ID): cv.use_id(time_comp.RealTimeClock),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 

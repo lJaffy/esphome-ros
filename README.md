@@ -129,7 +129,7 @@ time:
 
 ros2:
   middleware: xrce_dds
-  time: sntp_time   # optional; stamps all headers, else zeros
+  time_id: sntp_time   # optional; stamps all headers, else zeros
   publications:
     - topic: /joint_states
       type: sensor_msgs/JointState
@@ -355,7 +355,7 @@ time:
     id: sntp_time
 ros2:
   middleware: mqtt
-  time: sntp_time
+  time_id: sntp_time
   publications:
     - topic: /sonar/range
       type: sensor_msgs/Range

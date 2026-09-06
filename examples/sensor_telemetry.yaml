@@ -41,7 +41,7 @@ sensor:
 
 ros2:
   middleware: mqtt
-  time: sntp_time
+  time_id: sntp_time
   publications:
     - topic: /sonar/range
       type: sensor_msgs/Range

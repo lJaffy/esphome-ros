@@ -26,7 +26,7 @@ Scope: `esphome/components/xrce_dds/*`, `examples/*.yaml`, `tests/test_xrce_dds_
 ## Phase 1a — data-plane correctness: time, telemetry, QoS (done)
 Scope: `ros2/__init__.py`, `ros2_types.h/.cpp`, `ros2_json.cpp`, `xrce_dds_codec.cpp`,
 `ros2_mqtt`, `xrce_dds_component`, parity + schema tests, `examples/sensor_telemetry.yaml`.
-- Time sync: optional `ros2.time: sntp_time` (`time::RealTimeClock`, inline `utcnow()`
+- Time sync: optional `ros2.time_id: sntp_time` (`time::RealTimeClock`, inline `utcnow()`
   so no link dependency); stamps `JointState`/`Range`/`BatteryState`/`CompressedImage`
   (nanosec 0 — ESPTime has no sub-second field; zeros when unset/unsynced). Per-publication
   `frame_id:` (header types only, `[A-Za-z0-9/_-]` whitelist for the hand-encoded image JSON).
