@@ -1,6 +1,7 @@
 #include "ros2_mqtt.h"
 
 #include "esphome/components/mqtt/mqtt_client.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 namespace esphome {
@@ -59,6 +60,22 @@ bool Ros2MqttComponent::publish(const std::string &topic, const ros2::TypeDef *t
   std::string payload = this->codec_.serialize(type, sample, len);
   return this->CustomMQTTDevice::publish(this->expand_prefix_(topic), payload, this->default_qos_,
                                          this->default_retain_);
+}
+
+bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) {
+  if (jpeg == nullptr || len == 0)
+    return false;
+  // Manual concat, not ArduinoJson: a UXGA frame base64s to ~200 kB and a
+  // JSON doc that size would need a 400 kB+ arena. Base64 output needs no
+  // escaping (no '"' or '\\' in the alphabet).
+  std::string b64 = base64_encode(jpeg, len);
+  std::string payload;
+  payload.reserve(b64.size() + 32);
+  payload += "{\"format\":\"jpeg\",\"data\":\"";
+  payload += b64;
+  payload += "\"}";
+  // Never retained: a stale frame must not replay to late subscribers.
+  return this->CustomMQTTDevice::publish(this->expand_prefix_(topic), payload, this->default_qos_, false);
 }
 
 bool Ros2MqttComponent::connected() const {

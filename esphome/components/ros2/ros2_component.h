@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "esphome/core/component.h"
@@ -12,6 +13,7 @@
 #endif
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
+#include "esphome/components/camera/camera.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/servo/servo.h"
 #include "esphome/components/switch/switch.h"
@@ -37,6 +39,7 @@ enum class PubKind : uint8_t {
   SWITCH_SINGLE,
   BINARY_SENSOR_SINGLE,
   JOINT_MULTI,
+  IMAGE_SINGLE,
 };
 
 struct JointTarget {
@@ -72,13 +75,14 @@ struct Publication {
   sensor::Sensor *sensor{nullptr};
   switch_::Switch *sw{nullptr};
   binary_sensor::BinarySensor *bsensor{nullptr};
+  camera::Camera *camera{nullptr};
   std::array<JointSource, ROS2_MAX_TARGETS> joints{};
   size_t num_joints{0};
   uint32_t interval_ms{1000};
   uint32_t last_pub{0};
 };
 
-class Ros2Component : public Component {
+class Ros2Component : public Component, public camera::CameraListener {
  public:
   void set_middleware_name(const std::string &name) { this->middleware_name_ = name; }
   void set_default_publish_interval(uint32_t ms) { this->default_interval_ms_ = ms; }
@@ -100,9 +104,13 @@ class Ros2Component : public Component {
   uint8_t add_binary_sensor_publication(const char *topic, const char *type, binary_sensor::BinarySensor *bs,
                                         uint32_t interval_ms);
   uint8_t add_joint_state_publication(const char *topic, const char *type, uint32_t interval_ms);
+  uint8_t add_image_publication(const char *topic, const char *type, camera::Camera *camera, uint32_t interval_ms);
+  void on_camera_image(const std::shared_ptr<camera::CameraImage> &image) override;
 
  protected:
   void try_subscribe_();
+  void register_camera_listener_();
+  void publish_compressed_image_(Publication &pub, const uint8_t *jpeg, size_t len);
   void dispatch_scalar_switch_(const Subscription &sub, const void *sample);
   void dispatch_scalar_servo_(const Subscription &sub, const void *sample);
   void dispatch_joints_(const Subscription &sub, const void *sample);

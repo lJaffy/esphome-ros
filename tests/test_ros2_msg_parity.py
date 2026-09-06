@@ -22,6 +22,7 @@ ROS2_DIR = REPO / "esphome" / "components" / "ros2"
 
 EXPECTED_MSG_FIELDS = {
     "sensor_msgs/msg/JointState.msg": ["header", "name", "position", "velocity", "effort"],
+    "sensor_msgs/msg/CompressedImage.msg": ["header", "format", "data"],
     "trajectory_msgs/msg/JointTrajectory.msg": ["header", "joint_names", "points"],
     "trajectory_msgs/msg/JointTrajectoryPoint.msg": [
         "positions", "velocities", "accelerations", "effort", "time_from_start",
@@ -33,10 +34,12 @@ EXPECTED_MSG_FIELDS = {
     "std_msgs/msg/String.msg": ["data"],
 }
 
-# JSON keys the codec must handle, per canonical field names above.
+# JSON keys the bridge must handle, per canonical field names above.
+# Image keys live in the MQTT transport (ros2_mqtt.cpp), the rest in the
+# codec (ros2_json.cpp).
 EXPECTED_WIRE_KEYS = [
     "name", "position", "velocity", "effort",
-    "joint_names", "points", "positions", "data",
+    "joint_names", "points", "positions", "data", "format",
 ]
 
 # Struct members mirroring canonical fields (bounded MCU projection).
@@ -81,8 +84,11 @@ def _read(name):
 
 def test_wire_keys_cover_canonical_fields():
     codec = _read("ros2_json.cpp")
+    mqtt = (REPO / "esphome" / "components" / "ros2_mqtt" / "ros2_mqtt.cpp").read_text()
     for key in EXPECTED_WIRE_KEYS:
-        assert f'root["{key}"]' in codec or f'p0["{key}"]' in codec, key
+        in_codec = f'root["{key}"]' in codec or f'p0["{key}"]' in codec
+        in_mqtt = f'\\"{key}\\"' in mqtt
+        assert in_codec or in_mqtt, key
 
 
 def test_no_plural_alias_for_joint_state_name():

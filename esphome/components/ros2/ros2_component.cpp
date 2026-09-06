@@ -15,7 +15,54 @@ namespace esphome
 
     float Ros2Component::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
 
-    void Ros2Component::setup() { this->try_subscribe_(); }
+    void Ros2Component::setup()
+    {
+      this->try_subscribe_();
+      this->register_camera_listener_();
+    }
+
+    void Ros2Component::register_camera_listener_()
+    {
+      bool want_images = false;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE && this->pubs_[i].camera != nullptr)
+        {
+          want_images = true;
+          break;
+        }
+      }
+      if (want_images && camera::Camera::instance() != nullptr)
+        camera::Camera::instance()->add_listener(this);
+      else if (want_images)
+        ESP_LOGE(TAG, "Image publication configured but no camera instance found");
+    }
+
+    void Ros2Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image)
+    {
+      if (this->mw_ == nullptr || !this->mw_->connected())
+        return;
+      if (image == nullptr || image->get_data_length() == 0)
+        return;
+      const uint32_t now = App.get_loop_component_start_time();
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].kind != PubKind::IMAGE_SINGLE)
+          continue;
+        if (now - this->pubs_[i].last_pub < this->pubs_[i].interval_ms)
+          continue;
+        this->pubs_[i].last_pub = now;
+        this->publish_compressed_image_(this->pubs_[i], image->get_data_buffer(), image->get_data_length());
+      }
+    }
+
+    void Ros2Component::publish_compressed_image_(Publication &pub, const uint8_t *jpeg, size_t len)
+    {
+      if (this->mw_ == nullptr)
+        return;
+      if (!this->mw_->publish_image(pub.topic, jpeg, len))
+        ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", pub.topic.c_str(), (unsigned) len);
+    }
 
     void Ros2Component::try_subscribe_()
     {
@@ -85,6 +132,11 @@ namespace esphome
                     this->mw_ != nullptr ? "found" : "MISSING");
       ESP_LOGCONFIG(TAG, "  Subscriptions: %u, Publications: %u", (unsigned)this->num_subs_,
                     (unsigned)this->num_pubs_);
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE)
+          ESP_LOGCONFIG(TAG, "  Image: %s (CompressedImage)", this->pubs_[i].topic.c_str());
+      }
     }
 
     void Ros2Component::dispatch_scalar_switch_(const Subscription &sub, const void *sample)
@@ -461,10 +513,41 @@ namespace esphome
       return this->num_pubs_++;
     }
 
+    uint8_t Ros2Component::add_image_publication(const char *topic, const char *type, camera::Camera *camera,
+                                                uint32_t interval_ms)
+    {
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type(type);
+      if (def == nullptr || strcmp(def->name, "sensor_msgs/CompressedImage") != 0)
+      {
+        ESP_LOGE(TAG, "Image publication needs sensor_msgs/CompressedImage (got '%s')", type);
+        return 255;
+      }
+      if (camera == nullptr)
+      {
+        ESP_LOGE(TAG, "Image publication needs a camera (got null)");
+        return 255;
+      }
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::IMAGE_SINGLE;
+      pub.camera = camera;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+    }
+
     void Ros2Component::poll_publication_(Publication &pub)
     {
       if (this->mw_ == nullptr || !this->mw_->connected())
         return;
+      if (pub.kind == PubKind::IMAGE_SINGLE)
+        return;  // push path: on_camera_image publishes, throttled by interval_ms
       const uint32_t now = App.get_loop_component_start_time();
       if (now - pub.last_pub < pub.interval_ms)
         return;

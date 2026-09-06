@@ -14,14 +14,19 @@ from esphome.types import ConfigType
 def _auto_load(config=None):
     # Servo lib must always be present: servo code paths are compiled
     # unconditionally so JointState dispatch links even for switch-only
-    # configs. Configs without servos pay a small flash cost.
-    return ["json", "binary_sensor", "sensor", "switch", "servo"]
+    # configs. Configs without servos pay a small flash cost. Camera lib is
+    # likewise always present so the image publish path always links; the
+    # listener only registers when an image publication is configured.
+    return ["json", "binary_sensor", "sensor", "switch", "servo", "camera"]
 
 
 AUTO_LOAD = _auto_load
 
 ros2_ns = cg.esphome_ns.namespace("ros2")
 Ros2Component = ros2_ns.class_("Ros2Component", cg.Component)
+
+camera_ns = cg.esphome_ns.namespace("camera")
+Camera = camera_ns.class_("Camera", cg.Component)
 
 CONF_MIDDLEWARE = "middleware"
 CONF_DEFAULT_PUBLISH_INTERVAL = "default_publish_interval"
@@ -47,7 +52,10 @@ MULTI_JOINT_TYPES = [
     "sensor_msgs/JointState",
     "trajectory_msgs/JointTrajectory",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES
+IMAGE_TYPES = [
+    "sensor_msgs/CompressedImage",
+]
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + IMAGE_TYPES
 
 
 def _entity_ref(entity_cls):
@@ -80,12 +88,21 @@ def _single_target_schema():
     )
 
 
+def _camera_source_schema() -> cv.Schema:
+    return cv.Schema(
+        {
+            cv.Required(CONF_ID): cv.use_id(Camera),
+        }
+    )
+
+
 def _single_source_schema():
     return cv.Schema(
         {
             cv.Optional("sensor"): _entity_ref(Sensor),
             cv.Optional("switch"): _entity_ref(Switch),
             cv.Optional("binary_sensor"): _entity_ref(BinarySensor),
+            cv.Optional("camera"): _camera_source_schema(),
         }
     )
 
@@ -154,16 +171,18 @@ def _validate_publication(config: ConfigType) -> ConfigType:
     if type_ not in MULTI_JOINT_TYPES and has_sources:
         raise cv.Invalid(f"Type {type_} requires source: (singular)")
     if has_source:
-        kinds = [k for k in ("sensor", "switch", "binary_sensor")
+        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera")
                  if config[CONF_SOURCE].get(k) is not None]
         if len(kinds) != 1:
             raise cv.Invalid(
-                "source: needs exactly one of sensor:, switch:, binary_sensor:")
+                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:")
         if "sensor" in kinds and type_ != "std_msgs/Float32":
             raise cv.Invalid("sensor: sources need std_msgs/Float32")
         if ("switch" in kinds or "binary_sensor" in kinds) and type_ != "std_msgs/Bool":
             raise cv.Invalid(
                 "switch:/binary_sensor: sources need std_msgs/Bool")
+        if "camera" in kinds and type_ not in IMAGE_TYPES:
+            raise cv.Invalid("camera: sources need sensor_msgs/CompressedImage")
     return config
 
 
@@ -238,6 +257,9 @@ async def to_code(config: ConfigType) -> None:
                 ent = await cg.get_variable(bs[CONF_ID])
                 cg.add(var.add_binary_sensor_publication(
                     topic, type_, ent, interval))
+            elif (cam := source.get("camera")) is not None:
+                ent = await cg.get_variable(cam[CONF_ID])
+                cg.add(var.add_image_publication(topic, type_, ent, interval))
         else:
             cg.add(var.add_joint_state_publication(topic, type_, interval))
             for entry in pub[CONF_SOURCES]:

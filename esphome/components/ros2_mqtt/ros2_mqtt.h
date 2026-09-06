@@ -26,6 +26,7 @@ class Ros2MqttComponent : public Component, public mqtt::CustomMQTTDevice, publi
                  const ros2::MiddlewareOptions *opts = nullptr) override;
   bool publish(const std::string &topic, const ros2::TypeDef *type, const void *sample, size_t len,
                const ros2::MiddlewareOptions *opts = nullptr) override;
+  bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len) override;
   bool connected() const override;
   const char *name() const override { return "mqtt"; }
 
