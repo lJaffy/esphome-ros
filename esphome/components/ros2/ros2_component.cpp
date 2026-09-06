@@ -47,9 +47,9 @@ namespace esphome
 #endif
     }
 
+#ifdef USE_CAMERA
     void Ros2Component::on_camera_image(const std::shared_ptr<camera::CameraImage> &image)
     {
-#ifdef USE_CAMERA
       if (this->mw_ == nullptr || !this->mw_->connected())
         return;
       if (image == nullptr || image->get_data_length() == 0)
@@ -64,10 +64,8 @@ namespace esphome
         this->pubs_[i].last_pub = now;
         this->publish_compressed_image_(this->pubs_[i], image->get_data_buffer(), image->get_data_length());
       }
-#else
-      (void) image;
-#endif
     }
+#endif
 
     void Ros2Component::publish_compressed_image_(Publication &pub, const uint8_t *jpeg, size_t len)
     {

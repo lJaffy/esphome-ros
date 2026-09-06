@@ -596,17 +596,17 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
       root["voltage"] = msg->voltage;
       // Unmeasured fields are NaN per the IDL; JSON has no NaN, so absent
       // keys mean unmeasured (CDR encodes them as NaN doubles).
-      if (!isnan(msg->temperature))
+      if (!std::isnan(msg->temperature))
         root["temperature"] = msg->temperature;
-      if (!isnan(msg->current))
+      if (!std::isnan(msg->current))
         root["current"] = msg->current;
-      if (!isnan(msg->charge))
+      if (!std::isnan(msg->charge))
         root["charge"] = msg->charge;
-      if (!isnan(msg->capacity))
+      if (!std::isnan(msg->capacity))
         root["capacity"] = msg->capacity;
-      if (!isnan(msg->design_capacity))
+      if (!std::isnan(msg->design_capacity))
         root["design_capacity"] = msg->design_capacity;
-      if (!isnan(msg->percentage))
+      if (!std::isnan(msg->percentage))
         root["percentage"] = msg->percentage;
       root["power_supply_status"] = msg->power_supply_status;
       root["power_supply_health"] = msg->power_supply_health;
