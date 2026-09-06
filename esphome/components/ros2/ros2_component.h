@@ -25,6 +25,8 @@
 namespace esphome {
 namespace ros2 {
 
+// Static-only bounds: each Subscription carries a full joint table, so keep
+// these small (ESP32 SRAM). Raise only with a measured RAM budget.
 constexpr size_t ROS2_MAX_SUBSCRIPTIONS = 16;
 constexpr size_t ROS2_MAX_PUBLICATIONS = 16;
 constexpr size_t ROS2_MAX_TARGETS = 16;
