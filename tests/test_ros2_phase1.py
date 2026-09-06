@@ -427,6 +427,64 @@ def test_supported_types_cover_imu(ros2):
     assert "sensor_msgs/Imu" in ros2.SUPPORTED_TYPES
 
 
+def _gps_pub(ros2, **kw):
+    base = {"topic": "/fix", "type": "sensor_msgs/NavSatFix",
+            "source": {"gps": {"latitude": {"id": "lat"},
+                               "longitude": {"id": "lon"}}}}
+    base.update(kw)
+    return ros2.PUBLICATION_SCHEMA(base)
+
+
+def test_navsatfix_publish_only(ros2):
+    with pytest.raises(Exception):
+        ros2.SUBSCRIPTION_SCHEMA(
+            {"topic": "/fix", "type": "sensor_msgs/NavSatFix",
+             "target": {"switch": {"id": "s"}}}
+        )
+
+
+def test_navsatfix_needs_gps_source(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="sensor_msgs/NavSatFix",
+             source={"sensor": {"id": "s"}})
+
+
+def test_navsatfix_rejects_non_gps_source(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/fix", "type": "std_msgs/Float32",
+             "source": {"gps": {"latitude": {"id": "lat"},
+                                "longitude": {"id": "lon"}}}}
+        )
+
+
+def test_valid_gps_source(ros2):
+    cfg = _gps_pub(ros2, frame_id="gps_antenna")
+    assert cfg["frame_id"] == "gps_antenna"
+
+
+def test_valid_gps_source_with_altitude(ros2):
+    cfg = ros2.PUBLICATION_SCHEMA(
+        {"topic": "/fix", "type": "sensor_msgs/NavSatFix",
+         "source": {"gps": {"latitude": {"id": "lat"},
+                            "longitude": {"id": "lon"},
+                            "altitude": {"id": "alt"}}}}
+    )
+    assert cfg["type"] == "sensor_msgs/NavSatFix"
+
+
+def test_gps_source_requires_lat_lon(ros2):
+    with pytest.raises(Exception):
+        ros2.PUBLICATION_SCHEMA(
+            {"topic": "/fix", "type": "sensor_msgs/NavSatFix",
+             "source": {"gps": {"latitude": {"id": "lat"}}}}
+        )
+
+
+def test_supported_types_cover_gps(ros2):
+    assert "sensor_msgs/NavSatFix" in ros2.SUPPORTED_TYPES
+
+
 def test_auto_load_full_without_config(ros2):
     libs = ros2._auto_load()
     for lib in ("json", "binary_sensor", "sensor", "switch", "servo", "camera", "light"):

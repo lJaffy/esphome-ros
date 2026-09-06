@@ -530,6 +530,42 @@ bool JsonCodec::deserialize(const TypeDef *type, const std::string &payload, voi
       return true;
     }) && ok;
   }
+  if (strcmp(type->name, "sensor_msgs/NavSatFix") == 0) {
+    if (out_len < sizeof(NavSatFixMsg))
+      return false;
+    auto *msg = static_cast<NavSatFixMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    msg->altitude = NAN;
+    return json::parse_json(payload, [&](JsonObject root) -> bool {
+      if (!root["latitude"].is<float>() || !root["longitude"].is<float>())
+        return true;
+      read_header(root, &msg->header);
+      JsonObjectConst status = root["status"].as<JsonObjectConst>();
+      if (!status.isNull()) {
+        if (status["status"].is<int>())
+          msg->status = (int8_t) status["status"].as<int>();
+        if (status["service"].is<int>())
+          msg->service = (uint16_t) status["service"].as<int>();
+      }
+      msg->latitude = root["latitude"].as<float>();
+      msg->longitude = root["longitude"].as<float>();
+      if (root["altitude"].is<float>())
+        msg->altitude = root["altitude"].as<float>();
+      JsonArrayConst cov = root["position_covariance"].as<JsonArrayConst>();
+      if (!cov.isNull()) {
+        size_t i = 0;
+        for (JsonVariantConst v : cov) {
+          if (i >= 9)
+            break;
+          msg->position_covariance[i++] = v.as<float>();
+        }
+      }
+      if (root["position_covariance_type"].is<int>())
+        msg->position_covariance_type = (uint8_t) root["position_covariance_type"].as<int>();
+      ok = true;
+      return true;
+    }) && ok;
+  }
   return false;
 }
 
@@ -698,6 +734,26 @@ std::string JsonCodec::serialize(const TypeDef *type, const void *sample, size_t
       JsonArray acc_cov = root["linear_acceleration_covariance"].to<JsonArray>();
       for (uint8_t i = 0; i < 9; i++)
         acc_cov.add(msg->linear_acceleration_covariance[i]);
+    });
+    return std::string(buf.c_str(), buf.size());
+  }
+  if (strcmp(type->name, "sensor_msgs/NavSatFix") == 0 && len >= sizeof(NavSatFixMsg)) {
+    auto *msg = static_cast<const NavSatFixMsg *>(sample);
+    auto buf = json::build_json([&](JsonObject root) {
+      write_header(root, msg->header);
+      JsonObject status = root["status"].to<JsonObject>();
+      status["status"] = msg->status;
+      status["service"] = msg->service;
+      root["latitude"] = msg->latitude;
+      root["longitude"] = msg->longitude;
+      // Altitude NaN (no altimeter bound) has no JSON encoding, so absent
+      // keys mean unavailable (CDR encodes them as NaN doubles).
+      if (!std::isnan(msg->altitude))
+        root["altitude"] = msg->altitude;
+      JsonArray cov = root["position_covariance"].to<JsonArray>();
+      for (uint8_t i = 0; i < 9; i++)
+        cov.add(msg->position_covariance[i]);
+      root["position_covariance_type"] = msg->position_covariance_type;
     });
     return std::string(buf.c_str(), buf.size());
   }

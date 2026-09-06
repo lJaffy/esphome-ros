@@ -180,6 +180,22 @@ namespace esphome
       float linear_acceleration_covariance[9]{0.0f};
     };
 
+    // MCU projection of sensor_msgs/NavSatFix. Position covariance is
+    // float[9] here, float64[9] on the wire. Status/service follow the
+    // NavSatStatus IDL (STATUS_FIX = 0, SERVICE_GPS = 1); covariance publishes
+    // as zeros with type UNKNOWN (no uncertainty model on the MCU).
+    struct NavSatFixMsg
+    {
+      HeaderMsg header;
+      int8_t status{0};
+      uint16_t service{0};
+      float latitude{0.0f};
+      float longitude{0.0f};
+      float altitude{0.0f};
+      float position_covariance[9]{0.0f};
+      uint8_t position_covariance_type{0};
+    };
+
     const TypeDef *find_type(const char *name);
     bool is_multi_joint_type(const TypeDef *type);
 

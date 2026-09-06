@@ -104,6 +104,7 @@ enum class PubKind : uint8_t {
   ODOM,
   TF,
   IMU,
+  NAVSAT,
 };
 
 enum class LightField : uint8_t {
@@ -195,6 +196,12 @@ struct Publication {
   sensor::Sensor *imu_gyro[3]{nullptr};
   sensor::Sensor *imu_orientation[4]{nullptr};
   bool imu_has_orientation{false};
+  // sensor_msgs/NavSatFix source: latitude + longitude (degrees, required),
+  // altitude (m, optional; NaN on the wire when unbound). Status is fixed
+  // at STATUS_FIX while lat/lon have state; otherwise the poll is skipped.
+  sensor::Sensor *navsat_lat{nullptr};
+  sensor::Sensor *navsat_lon{nullptr};
+  sensor::Sensor *navsat_alt{nullptr};
 };
 
 #ifdef USE_CAMERA
@@ -235,6 +242,9 @@ class Ros2Component : public Component {
   uint8_t add_odom_publication(const char *topic, uint32_t interval_ms);
   uint8_t add_tf_publication(const char *topic, uint32_t interval_ms);
   uint8_t add_imu_publication(const char *topic, uint32_t interval_ms);
+  uint8_t add_navsat_publication(const char *topic, uint32_t interval_ms);
+  void set_navsat_sources(const char *topic, sensor::Sensor *lat, sensor::Sensor *lon);
+  void set_navsat_altitude(const char *topic, sensor::Sensor *alt);
   void set_imu_sources(const char *topic, sensor::Sensor *ax, sensor::Sensor *ay, sensor::Sensor *az,
                        sensor::Sensor *gx, sensor::Sensor *gy, sensor::Sensor *gz);
   void set_imu_orientation(const char *topic, sensor::Sensor *ox, sensor::Sensor *oy, sensor::Sensor *oz,
@@ -278,6 +288,7 @@ class Ros2Component : public Component {
   void poll_odom_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
   void poll_tf_(Publication &pub, const MiddlewareOptions &opts);
   void poll_imu_(Publication &pub, const MiddlewareOptions &opts);
+  void poll_navsat_(Publication &pub, const MiddlewareOptions &opts);
   void publish_tf_transform_(const std::string &topic, const MiddlewareOptions &opts, int32_t sec,
                              const char *frame_id, const char *child_frame_id, float x, float y,
                              float qz, float qw);

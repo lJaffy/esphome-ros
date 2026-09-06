@@ -1184,6 +1184,59 @@ namespace esphome
       }
     }
 
+    uint8_t Ros2Component::add_navsat_publication(const char *topic, uint32_t interval_ms)
+    {
+#ifndef USE_SENSOR
+      (void) topic;
+      (void) interval_ms;
+      ESP_LOGE(TAG, "sensor support not compiled in");
+      return 255;
+#else
+      if (this->num_pubs_ >= ROS2_MAX_PUBLICATIONS)
+      {
+        ESP_LOGE(TAG, "Too many publications (max %u)", (unsigned) ROS2_MAX_PUBLICATIONS);
+        return 255;
+      }
+      const TypeDef *def = find_type("sensor_msgs/NavSatFix");
+      if (def == nullptr)
+        return 255;
+      Publication pub;
+      pub.topic = topic;
+      pub.type = def;
+      pub.kind = PubKind::NAVSAT;
+      pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
+      this->pubs_[this->num_pubs_] = pub;
+      return this->num_pubs_++;
+#endif
+    }
+
+    void Ros2Component::set_navsat_sources(const char *topic, sensor::Sensor *lat, sensor::Sensor *lon)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic && this->pubs_[i].kind == PubKind::NAVSAT)
+        {
+          this->pubs_[i].navsat_lat = lat;
+          this->pubs_[i].navsat_lon = lon;
+        }
+      }
+    }
+
+    void Ros2Component::set_navsat_altitude(const char *topic, sensor::Sensor *alt)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic && this->pubs_[i].kind == PubKind::NAVSAT)
+        {
+          this->pubs_[i].navsat_alt = alt;
+        }
+      }
+    }
+
     void Ros2Component::add_tf_transform(const char *topic, const char *frame_id, const char *child_frame_id,
                                          float tx, float ty, float tz, float qx, float qy, float qz,
                                          float qw)
@@ -1359,6 +1412,10 @@ namespace esphome
       else if (strcmp(pub.type->name, "sensor_msgs/Imu") == 0)
       {
         this->poll_imu_(pub, opts);
+      }
+      else if (strcmp(pub.type->name, "sensor_msgs/NavSatFix") == 0)
+      {
+        this->poll_navsat_(pub, opts);
       }
       else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
       {
@@ -1539,6 +1596,38 @@ namespace esphome
         }
         msg.orientation_covariance[0] = 0.0f;
       }
+      this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+#else
+      (void) pub;
+      (void) opts;
+#endif
+    }
+
+    void Ros2Component::poll_navsat_(Publication &pub, const MiddlewareOptions &opts)
+    {
+      if (pub.kind != PubKind::NAVSAT)
+        return;
+#ifdef USE_SENSOR
+      // Latitude + longitude are required; skip until both have state
+      // (mirrors Range/BatteryState). A skipped poll reads as NO_FIX
+      // downstream; published samples carry STATUS_FIX + SERVICE_GPS.
+      if (pub.navsat_lat == nullptr || !pub.navsat_lat->has_state())
+        return;
+      if (pub.navsat_lon == nullptr || !pub.navsat_lon->has_state())
+        return;
+      NavSatFixMsg msg;
+      memset(&msg, 0, sizeof(msg));
+      this->fill_header_(msg.header, pub.frame_id);
+      msg.status = 0;   // STATUS_FIX (unaugmented fix)
+      msg.service = 1;  // SERVICE_GPS
+      msg.latitude = pub.navsat_lat->state;
+      msg.longitude = pub.navsat_lon->state;
+      if (pub.navsat_alt != nullptr && pub.navsat_alt->has_state())
+        msg.altitude = pub.navsat_alt->state;
+      else
+        msg.altitude = NAN;
+      // Covariance unknown: zeros + UNKNOWN type (fuse on the host).
+      msg.position_covariance_type = 0;
       this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #else
       (void) pub;

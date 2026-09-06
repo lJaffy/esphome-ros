@@ -396,7 +396,29 @@ ros2:
 
 IMU semantics: accel in m/s², gyro in rad/s; skipped until all six axes have state. Orientation is optional (`orientation_x/y/z/w` quaternion sensors, normalized defensively with identity fallback); absent orientation publishes `0,0,0,0` with `orientation_covariance[0] = -1` ("no estimate") per the IDL. All other covariances publish as zeros (no uncertainty model — fuse on the host).
 
-### 6. `rover_diff_drive.yaml` — cmd_vel rover with odometry + TF (ESP32-S3, XRCE-DDS)
+### 6. `gps_navsat.yaml` — NavSatFix (ESP32-S3, MQTT)
+
+Template sensors stand in for a `gps:` receiver over UART (same sensor IDs); SNTP time stamps the header:
+
+```yaml
+ros2:
+  middleware: mqtt
+  time_id: sntp_time
+  publications:
+    - topic: /fix
+      type: sensor_msgs/NavSatFix
+      source:
+        gps:
+          latitude: {id: gps_latitude}
+          longitude: {id: gps_longitude}
+          altitude: {id: gps_altitude}  # optional; absent publishes NaN per the IDL
+      frame_id: gps_antenna
+      interval: 1s
+```
+
+Semantics: skipped until latitude + longitude both have state (reads as NO_FIX downstream); published samples carry `STATUS_FIX` + `SERVICE_GPS`. Covariance publishes as zeros with type UNKNOWN (no uncertainty model — fuse on the host for anything serious). Verify with `ros2 topic echo /fix`.
+
+### 7. `rover_diff_drive.yaml` — cmd_vel rover with odometry + TF (ESP32-S3, XRCE-DDS)
 
 Two continuous-rotation servos as wheel velocity outputs (`level -1..1` = reverse..forward):
 
@@ -460,7 +482,7 @@ python -m pytest tests/
 esphome/components/ros2/       # __init__.py, ros2_component.{h,cpp}, ros2_{types,json,middleware}.{h,cpp}
 esphome/components/ros2_mqtt/  # __init__.py, ros2_mqtt.{h,cpp}
 esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}
-examples/*.yaml                # 6 demos above
+examples/*.yaml                # 7 demos above
 tests/*.py                     # 3 pytest files
 third_party/common_interfaces  # submodule, canonical .msg
 ```

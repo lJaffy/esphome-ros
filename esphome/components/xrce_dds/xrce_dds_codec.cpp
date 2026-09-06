@@ -181,6 +181,8 @@ const char *dds_type_suffix(const char *ros_name) {
     return "tf2_msgs::msg::dds_::TFMessage_";
   if (strcmp(ros_name, "sensor_msgs/Imu") == 0)
     return "sensor_msgs::msg::dds_::Imu_";
+  if (strcmp(ros_name, "sensor_msgs/NavSatFix") == 0)
+    return "sensor_msgs::msg::dds_::NavSatFix_";
   if (strcmp(ros_name, "sensor_msgs/CompressedImage") == 0)
     return "sensor_msgs::msg::dds_::CompressedImage_";
   return "";
@@ -307,6 +309,15 @@ uint32_t XcdrCodec::size_of(const ros2::TypeDef *type, const void *sample, size_
     size = f64_vec_size(size, 9);  // angular_velocity_covariance
     size = f64_vec_size(size, 3);  // linear_acceleration
     size = f64_vec_size(size, 9);  // linear_acceleration_covariance
+    return size;
+  }
+  if (strcmp(type->name, "sensor_msgs/NavSatFix") == 0 && len >= sizeof(ros2::NavSatFixMsg)) {
+    size = header_size(0, &static_cast<const ros2::NavSatFixMsg *>(sample)->header);
+    size += 1;  // status (int8)
+    size += (uint32_t) (ucdr_alignment(size, 2) + 2);  // service (uint16)
+    size = f64_vec_size(size, 3);  // latitude, longitude, altitude
+    size = f64_vec_size(size, 9);  // position_covariance
+    size += 1;  // position_covariance_type (uint8)
     return size;
   }
   return 0;
@@ -457,6 +468,23 @@ bool XcdrCodec::serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void 
     if (!ser_f64_vec(ub, msg->linear_acceleration, 3))
       return false;
     return ser_f64_vec(ub, msg->linear_acceleration_covariance, 9);
+  }
+  if (strcmp(type->name, "sensor_msgs/NavSatFix") == 0 && len >= sizeof(ros2::NavSatFixMsg)) {
+    auto *msg = static_cast<const ros2::NavSatFixMsg *>(sample);
+    if (!ser_header(ub, &msg->header))
+      return false;
+    // Unavailable altitude is NaN (no altimeter bound); NaN floats go out
+    // as NaN doubles. Latitude/longitude/altitude are consecutive in the
+    // struct, so one vector write covers all three.
+    if (!ucdr_serialize_int8_t(ub, msg->status))
+      return false;
+    if (!ucdr_serialize_uint16_t(ub, msg->service))
+      return false;
+    if (!ser_f64_vec(ub, &msg->latitude, 3))
+      return false;
+    if (!ser_f64_vec(ub, msg->position_covariance, 9))
+      return false;
+    return ucdr_serialize_uint8_t(ub, msg->position_covariance_type);
   }
   return false;
 }
@@ -648,6 +676,21 @@ bool XcdrCodec::deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out
     if (!de_f64_vec(ub, msg->linear_acceleration, 3))
       return false;
     return de_f64_vec(ub, msg->linear_acceleration_covariance, 9);
+  }
+  if (strcmp(type->name, "sensor_msgs/NavSatFix") == 0 && out_len >= sizeof(ros2::NavSatFixMsg)) {
+    auto *msg = static_cast<ros2::NavSatFixMsg *>(out);
+    memset(msg, 0, sizeof(*msg));
+    if (!de_header(ub, &msg->header))
+      return false;
+    if (!ucdr_deserialize_int8_t(ub, &msg->status))
+      return false;
+    if (!ucdr_deserialize_uint16_t(ub, &msg->service))
+      return false;
+    if (!de_f64_vec(ub, &msg->latitude, 3))
+      return false;
+    if (!de_f64_vec(ub, msg->position_covariance, 9))
+      return false;
+    return ucdr_deserialize_uint8_t(ub, &msg->position_covariance_type);
   }
   return false;
 }

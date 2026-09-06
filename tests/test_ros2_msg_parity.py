@@ -55,6 +55,9 @@ EXPECTED_MSG_FIELDS = {
     "sensor_msgs/msg/Imu.msg": ["header", "orientation", "orientation_covariance",
                                 "angular_velocity", "angular_velocity_covariance",
                                 "linear_acceleration", "linear_acceleration_covariance"],
+    "sensor_msgs/msg/NavSatFix.msg": ["header", "status", "latitude", "longitude", "altitude",
+                                      "position_covariance", "position_covariance_type"],
+    "sensor_msgs/msg/NavSatStatus.msg": ["status", "service"],
     # tf2_msgs lives in ros2/geometry2, not in this submodule: TFMessage
     # (transforms: TransformStamped[]) is covered by members/keys only.
 }
@@ -77,6 +80,8 @@ EXPECTED_WIRE_KEYS = [
     "position", "orientation", "transforms", "transform", "translation", "rotation",
     "orientation_covariance", "angular_velocity", "angular_velocity_covariance",
     "linear_acceleration", "linear_acceleration_covariance",
+    "latitude", "longitude", "altitude", "status", "service",
+    "position_covariance", "position_covariance_type",
 ]
 
 # Struct members mirroring canonical fields (bounded MCU projection).
@@ -100,6 +105,9 @@ EXPECTED_MEMBERS = [
     "float orientation[", "float orientation_covariance[",
     "float angular_velocity[", "float angular_velocity_covariance[",
     "float linear_acceleration[", "float linear_acceleration_covariance[",
+    "int8_t status", "uint16_t service",
+    "float latitude{", "float longitude{", "float altitude{",
+    "float position_covariance[", "uint8_t position_covariance_type",
 ]
 
 

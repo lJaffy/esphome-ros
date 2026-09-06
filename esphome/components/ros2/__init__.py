@@ -39,6 +39,8 @@ def _auto_load(config=None):
                     libs.add(kind)
             if source.get(CONF_IMU) is not None:
                 libs.add("sensor")
+            if source.get(CONF_GPS) is not None:
+                libs.add("sensor")
         elif pub.get(CONF_SOURCES) is not None:
             libs.add("servo")
     if config.get(CONF_STATUS_SENSOR) is not None:
@@ -90,6 +92,10 @@ CONF_TF_TOPIC = "tf_topic"
 CONF_TRANSLATION = "translation"
 CONF_ROTATION = "rotation"
 CONF_IMU = "imu"
+CONF_GPS = "gps"
+CONF_LATITUDE = "latitude"
+CONF_LONGITUDE = "longitude"
+CONF_ALTITUDE = "altitude"
 CONF_ACCEL_X = "accel_x"
 CONF_ACCEL_Y = "accel_y"
 CONF_ACCEL_Z = "accel_z"
@@ -130,7 +136,10 @@ MOTION_TYPES = [
 IMU_TYPES = [
     "sensor_msgs/Imu",
 ]
-SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES + IMU_TYPES
+GPS_TYPES = [
+    "sensor_msgs/NavSatFix",
+]
+SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES + IMU_TYPES + GPS_TYPES
 
 # Types with std_msgs/Header: stamp comes from the time: source, frame_id
 # from each publication's frame_id:.
@@ -143,6 +152,7 @@ HEADER_TYPES = [
     "sensor_msgs/BatteryState",
     "nav_msgs/Odometry",
     "sensor_msgs/Imu",
+    "sensor_msgs/NavSatFix",
 ]
 
 QOS_LEVELS = ["reliable", "best_effort"]
@@ -291,6 +301,16 @@ def _imu_source_schema():
     )
 
 
+def _gps_source_schema():
+    return cv.Schema(
+        {
+            cv.Required(CONF_LATITUDE): _entity_ref(Sensor),
+            cv.Required(CONF_LONGITUDE): _entity_ref(Sensor),
+            cv.Optional(CONF_ALTITUDE): _entity_ref(Sensor),
+        }
+    )
+
+
 def _single_source_schema():
     return cv.Schema(
         {
@@ -301,6 +321,7 @@ def _single_source_schema():
             cv.Optional("light"): _light_target_schema(),
             cv.Optional(CONF_ODOM): _odom_source_schema(),
             cv.Optional(CONF_IMU): _imu_source_schema(),
+            cv.Optional(CONF_GPS): _gps_source_schema(),
         }
     )
 
@@ -333,6 +354,9 @@ def _validate_subscription(config: ConfigType) -> ConfigType:
         raise cv.Invalid(
             f"Type {type_} is publish-only (no target: entity consumes it)")
     if type_ in IMU_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is publish-only (no target: entity consumes it)")
+    if type_ in GPS_TYPES:
         raise cv.Invalid(
             f"Type {type_} is publish-only (no target: entity consumes it)")
     if type_ in MULTI_JOINT_TYPES and not has_targets:
@@ -418,11 +442,13 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         if type_ not in MULTI_JOINT_TYPES and has_sources:
             raise cv.Invalid(f"Type {type_} requires source: (singular)")
     if has_source:
-        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light", CONF_ODOM, CONF_IMU)
+        kinds = [k for k in ("sensor", "switch", "binary_sensor", "camera", "light", CONF_ODOM, CONF_IMU,
+                             CONF_GPS)
                  if config[CONF_SOURCE].get(k) is not None]
         if len(kinds) != 1:
             raise cv.Invalid(
-                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:, odom:, imu:")
+                "source: needs exactly one of sensor:, switch:, binary_sensor:, camera:, light:, odom:, imu:, "
+                "gps:")
         if "sensor" in kinds and type_ not in ("std_msgs/Float32", *TELEMETRY_TYPES):
             raise cv.Invalid(
                 "sensor: sources need std_msgs/Float32, sensor_msgs/Range, "
@@ -450,6 +476,13 @@ def _validate_publication(config: ConfigType) -> ConfigType:
             raise cv.Invalid(
                 "sensor_msgs/Imu needs an imu: source "
                 "(accel_x/y/z + gyro_x/y/z, optional orientation_x/y/z/w)")
+        if CONF_GPS in kinds and type_ != "sensor_msgs/NavSatFix":
+            raise cv.Invalid(
+                f"gps: sources need sensor_msgs/NavSatFix (got {type_})")
+        if type_ == "sensor_msgs/NavSatFix" and CONF_GPS not in kinds:
+            raise cv.Invalid(
+                "sensor_msgs/NavSatFix needs a gps: source "
+                "(latitude + longitude, optional altitude)")
     if type_ == "sensor_msgs/Imu" and has_source:
         imu = config[CONF_SOURCE].get(CONF_IMU, {})
         orientation_keys = [CONF_ORIENTATION_X, CONF_ORIENTATION_Y,
@@ -640,6 +673,14 @@ async def to_code(config: ConfigType) -> None:
                     ori_w = await cg.get_variable(imu[CONF_ORIENTATION_W][CONF_ID])
                     cg.add(var.set_imu_orientation(
                         topic, ori_x, ori_y, ori_z, ori_w))
+            elif (gps := source.get(CONF_GPS)) is not None:
+                lat = await cg.get_variable(gps[CONF_LATITUDE][CONF_ID])
+                lon = await cg.get_variable(gps[CONF_LONGITUDE][CONF_ID])
+                cg.add(var.add_navsat_publication(topic, interval))
+                cg.add(var.set_navsat_sources(topic, lat, lon))
+                if gps.get(CONF_ALTITUDE) is not None:
+                    alt = await cg.get_variable(gps[CONF_ALTITUDE][CONF_ID])
+                    cg.add(var.set_navsat_altitude(topic, alt))
         elif type_ == "tf2_msgs/TFMessage":
             cg.add(var.add_tf_publication(topic, interval))
             for entry in pub.get(CONF_TRANSFORMS, []):

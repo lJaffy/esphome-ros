@@ -1,0 +1,74 @@
+esphome:
+  name: gps-navsat
+  friendly_name: GPS NavSatFix
+
+esp32:
+  board: esp32-s3-devkitc-1
+
+logger:
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+mqtt:
+  broker: 192.168.1.10
+  topic_prefix: digitaltwin/gps
+
+ros2_mqtt:
+  default_qos: 0
+
+time:
+  - platform: sntp
+    id: sntp_time
+
+# Swap these templates for a real receiver (gps: over UART exposes the same
+# latitude/longitude/altitude sensors; see commented block below).
+# Publications are skipped until latitude + longitude both have state.
+sensor:
+  - platform: template
+    id: gps_latitude
+    name: GPS Latitude
+    unit_of_measurement: °
+    accuracy_decimals: 6
+  - platform: template
+    id: gps_longitude
+    name: GPS Longitude
+    unit_of_measurement: °
+    accuracy_decimals: 6
+  - platform: template
+    id: gps_altitude
+    name: GPS Altitude
+    unit_of_measurement: m
+    accuracy_decimals: 2
+
+# Real receiver wiring (UART):
+# uart:
+#   rx_pin: GPIO44
+#   baud_rate: 9600
+# gps:
+#   latitude: {id: gps_latitude}
+#   longitude: {id: gps_longitude}
+#   altitude: {id: gps_altitude}
+
+ros2:
+  middleware: mqtt
+  time_id: sntp_time
+  publications:
+    - topic: /fix
+      type: sensor_msgs/NavSatFix
+      source:
+        gps:
+          latitude: {id: gps_latitude}
+          longitude: {id: gps_longitude}
+          altitude: {id: gps_altitude}  # optional; absent publishes NaN per the IDL
+      frame_id: gps_antenna
+      interval: 1s
+
+# Verify from the ROS side:
+#   ros2 topic echo /fix
