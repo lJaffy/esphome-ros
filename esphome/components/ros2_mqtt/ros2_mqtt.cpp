@@ -3,11 +3,24 @@
 #include "esphome/components/mqtt/mqtt_client.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#if __has_include("esp_heap_caps.h")
+#include "esp_heap_caps.h"
+#define ROS2_MQTT_HAVE_HEAP_CAPS 1
+#endif
 
 namespace esphome {
 namespace ros2_mqtt {
 
 static const char *const TAG = "ros2_mqtt";
+
+// Single-payload budget: UXGA/q14 JPEGs land ~80-150 kB (-> ~110-200 kB
+// base64). Anything larger risks a >250 kB contiguous std::string, which the
+// S3 loop heap cannot reliably provide alongside WiFi/MQTT/camera buffers.
+static constexpr size_t ROS2_MQTT_MAX_JPEG_BYTES = 192 * 1024;
+// Keep headroom for the MQTT client's own copy plus WiFi/TLS churn.
+static constexpr size_t ROS2_MQTT_HEAP_MARGIN_BYTES = 60 * 1024;
+
+static const char K_B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 float Ros2MqttComponent::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
 
@@ -70,10 +83,18 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
                                       const ros2::MiddlewareOptions *opts) {
   if (jpeg == nullptr || len == 0)
     return false;
-  // Manual concat, not ArduinoJson: a UXGA frame base64s to ~200 kB and a
-  // JSON doc that size would need a 400 kB+ arena. Base64 output needs no
-  // escaping (no '"' or '\\' in the alphabet); frame_id is restricted to
-  // [A-Za-z0-9/_-] at validation so it needs none either.
+  // Zero-copy base64-in-JSON: the old path built a ~200 kB b64 std::string
+  // via per-char push_back (realloc storm) then copied it into a second
+  // ~200 kB payload -> ~400 kB transient + the MQTT client's own copy, which
+  // aborted the S3 loop task in __cxa_allocate_exception. Encode straight
+  // into one reserved payload instead. Base64 output needs no escaping (no
+  // '"' or '\\' in the alphabet); frame_id is restricted to [A-Za-z0-9/_-]
+  // at validation so it needs none either.
+  if (len > ROS2_MQTT_MAX_JPEG_BYTES) {
+    ESP_LOGW(TAG, "Image %u bytes exceeds %u byte MQTT budget; dropping", (unsigned) len,
+             (unsigned) ROS2_MQTT_MAX_JPEG_BYTES);
+    return false;
+  }
   int32_t sec = 0;
   uint32_t nsec = 0;
   const char *frame_id = "";
@@ -83,18 +104,56 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
     if (opts->frame_id != nullptr)
       frame_id = opts->frame_id;
   }
-  std::string b64 = base64_encode(jpeg, len);
+  std::string prefix = "{\"header\":{\"stamp\":{\"sec\":";
+  prefix += std::to_string(sec);
+  prefix += ",\"nanosec\":";
+  prefix += std::to_string(nsec);
+  prefix += "},\"frame_id\":\"";
+  prefix += frame_id;
+  prefix += "\"},\"format\":\"jpeg\",\"data\":\"";
+  static const char kSuffix[] = "\"}";
+  const size_t b64_len = ((len + 2) / 3) * 4;
+  const size_t need = prefix.size() + b64_len + sizeof(kSuffix);
+#ifdef ROS2_MQTT_HAVE_HEAP_CAPS
+  const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
+  if (free_heap < need + ROS2_MQTT_HEAP_MARGIN_BYTES) {
+    ESP_LOGW(TAG, "Low heap (%u free, need ~%u); dropping %u byte image", (unsigned) free_heap,
+             (unsigned) need, (unsigned) len);
+    return false;
+  }
+#endif
   std::string payload;
-  payload.reserve(b64.size() + 128);
-  payload += "{\"header\":{\"stamp\":{\"sec\":";
-  payload += std::to_string(sec);
-  payload += ",\"nanosec\":";
-  payload += std::to_string(nsec);
-  payload += "},\"frame_id\":\"";
-  payload += frame_id;
-  payload += "\"},\"format\":\"jpeg\",\"data\":\"";
-  payload += b64;
-  payload += "\"}";
+  payload.reserve(need);
+  payload += prefix;
+  const size_t out_start = payload.size();
+  payload.resize(out_start + b64_len);
+  char *out = &payload[out_start];
+  size_t o = 0;
+  size_t i = 0;
+  while (i + 3 <= len) {
+    uint32_t triple =
+        (static_cast<uint32_t>(jpeg[i]) << 16) | (static_cast<uint32_t>(jpeg[i + 1]) << 8) | jpeg[i + 2];
+    out[o++] = K_B64[(triple >> 18) & 0x3F];
+    out[o++] = K_B64[(triple >> 12) & 0x3F];
+    out[o++] = K_B64[(triple >> 6) & 0x3F];
+    out[o++] = K_B64[triple & 0x3F];
+    i += 3;
+  }
+  const size_t rem = len - i;
+  if (rem == 1) {
+    uint32_t triple = static_cast<uint32_t>(jpeg[i]) << 16;
+    out[o++] = K_B64[(triple >> 18) & 0x3F];
+    out[o++] = K_B64[(triple >> 12) & 0x3F];
+    out[o++] = '=';
+    out[o++] = '=';
+  } else if (rem == 2) {
+    uint32_t triple = (static_cast<uint32_t>(jpeg[i]) << 16) | (static_cast<uint32_t>(jpeg[i + 1]) << 8);
+    out[o++] = K_B64[(triple >> 18) & 0x3F];
+    out[o++] = K_B64[(triple >> 12) & 0x3F];
+    out[o++] = K_B64[(triple >> 6) & 0x3F];
+    out[o++] = '=';
+  }
+  payload += kSuffix;
   // Never retained: a stale frame must not replay to late subscribers.
   return this->CustomMQTTDevice::publish(this->expand_prefix_(topic), payload,
                                          this->effective_qos_(opts), false);
