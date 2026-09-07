@@ -17,11 +17,10 @@ namespace ros2_mqtt {
 
 static const char *const TAG = "ros2_mqtt";
 
-// ESP32 MQTT backend caps payloads at 64 KiB (QueueElement.payload_len is
-// uint16_t) and std::string lives in internal heap, which fragments under
-// WiFi/camera load. Build image JSON in PSRAM and stay well under the cap.
-static constexpr size_t ROS2_MQTT_MAX_PAYLOAD_BYTES = 60 * 1024;
-
+// std::string lives in internal heap, which fragments under WiFi/camera
+// load. Build image JSON in PSRAM instead; the MQTT backend copies it into
+// its own (PSRAM-preferred) queue, so oversize frames fail gracefully in
+// publish rather than aborting the loop task.
 static const char K_B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 float Ros2MqttComponent::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
@@ -86,8 +85,7 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
   if (jpeg == nullptr || len == 0)
     return false;
   // No std::string payload: large image JSON does not fit internal heap once
-  // fragmented, and the ESP32 MQTT backend rejects anything over 64 KiB
-  // anyway. Build one PSRAM buffer, base64 straight into it.
+  // fragmented. Build one PSRAM buffer, base64 straight into it.
   if (mqtt::global_mqtt_client == nullptr)
     return false;
   int32_t sec = 0;
@@ -107,12 +105,6 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
   const size_t prefix_len = strlen(stamp);
   const size_t b64_len = ((len + 2) / 3) * 4;
   const size_t need = prefix_len + b64_len + (sizeof(kSuffix) - 1);
-  if (need > ROS2_MQTT_MAX_PAYLOAD_BYTES) {
-    ESP_LOGW(TAG, "Image JSON ~%u bytes exceeds 60 kB MQTT budget (JPEG %u bytes); dropping "
-                  "(lower resolution/jpeg_quality)",
-             (unsigned) need, (unsigned) len);
-    return false;
-  }
 #ifdef ROS2_MQTT_HAVE_HEAP_CAPS
   char *buf = static_cast<char *>(heap_caps_malloc(need + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
   if (buf == nullptr)

@@ -2,9 +2,10 @@
 # Push path: esp32_camera captures per idle_framerate, Ros2Component listens
 # via camera::CameraListener and publishes sensor_msgs/CompressedImage as
 # base64-in-JSON, throttled by interval. QoS 0, never retained.
-# MQTT hard limit: image JSON must stay under ~60 kB (backend caps at 64 KiB).
-# That means VGA 640x480 at jpeg_quality 20 (~15-25 kB JPEG -> ~20-35 kB
-# JSON). Anything larger (XGA/UXGA) is dropped with a log, not crashed.
+# Keep frames small for a constrained link: VGA 640x480 at jpeg_quality 20
+# (~15-25 kB JPEG -> ~20-35 kB JSON) is the stable default. Larger
+# (XGA/UXGA) now sends instead of being dropped, but risks MQTT
+# congestion and slow loop warnings.
 esphome:
   name: xiao-sense-cam
   friendly_name: Xiao Sense Cam
