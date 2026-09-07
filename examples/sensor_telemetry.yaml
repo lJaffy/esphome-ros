@@ -29,40 +29,54 @@ time:
 
 # Swap these templates for real drivers (ultrasonic_sensor in m,
 # adc in V, mpu6050 accel in m/s^2 + gyro in rad/s).
-# Publications are skipped until the sensor has state.
+# Publications are skipped until the sensor has state, and stale repeats
+# are skipped (no republish without a fresh sample).
+# Decoupling pattern: sample fast for ROS (update_interval), throttle for
+# Home Assistant (filters), bridge reads raw: true so ROS sees every
+# sample while HA sees the throttled stream.
 sensor:
   - platform: template
     id: sonar_distance
     name: Sonar Distance
     unit_of_measurement: m
+    update_interval: 100ms
+    filters:
+      - throttle: 1s
   - platform: template
     id: pack_voltage
     name: Pack Voltage
     unit_of_measurement: V
+    update_interval: 1s
   - platform: template
     id: imu_accel_x
     name: IMU Accel X
     unit_of_measurement: m/s²
+    update_interval: 50ms
   - platform: template
     id: imu_accel_y
     name: IMU Accel Y
     unit_of_measurement: m/s²
+    update_interval: 50ms
   - platform: template
     id: imu_accel_z
     name: IMU Accel Z
     unit_of_measurement: m/s²
+    update_interval: 50ms
   - platform: template
     id: imu_gyro_x
     name: IMU Gyro X
     unit_of_measurement: rad/s
+    update_interval: 50ms
   - platform: template
     id: imu_gyro_y
     name: IMU Gyro Y
     unit_of_measurement: rad/s
+    update_interval: 50ms
   - platform: template
     id: imu_gyro_z
     name: IMU Gyro Z
     unit_of_measurement: rad/s
+    update_interval: 50ms
 
 ros2:
   middleware: mqtt
@@ -79,7 +93,8 @@ ros2:
       field_of_view: 0.5
       min_range: 0.02
       max_range: 4.0
-      interval: 1s
+      interval: 100ms
+      raw: true
     - topic: /battery/state
       type: sensor_msgs/BatteryState
       source:
@@ -105,7 +120,8 @@ ros2:
           # optional orientation_x/y/z/w (quaternion sensors):
           # normalized defensively; absent publishes covariance[0] = -1
       frame_id: imu_link
-      interval: 100ms
+      interval: 50ms
+      raw: true
 
 # Verify from the ROS side:
 #   ros2 topic echo /imu/data

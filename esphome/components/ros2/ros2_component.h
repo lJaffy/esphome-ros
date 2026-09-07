@@ -202,6 +202,34 @@ struct Publication {
   sensor::Sensor *navsat_lat{nullptr};
   sensor::Sensor *navsat_lon{nullptr};
   sensor::Sensor *navsat_alt{nullptr};
+  // Decoupled sampling cache: sensor callbacks (raw = pre-filter, filt =
+  // post-filter) copy the latest value + tick here so poll_publication_ can
+  // publish at the ROS interval while Home Assistant keeps its own
+  // update_interval / throttle cadence. Static-only, loop-thread only.
+  bool use_raw{false};
+  float raw_state{0.0f};
+  bool has_raw{false};
+  uint32_t raw_ms{0};
+  float filt_state{0.0f};
+  bool has_filt{false};
+  uint32_t filt_ms{0};
+  uint32_t last_sent_sample_ms{0};
+  bool has_sent{false};
+  uint32_t stale_skips{0};
+  // IMU caches: 0-2 accel, 3-5 gyro, 6-9 orientation.
+  float imu_raw[10]{0.0f};
+  bool imu_has_raw[10]{false};
+  uint32_t imu_raw_ms[10]{0};
+  float imu_filt[10]{0.0f};
+  bool imu_has_filt[10]{false};
+  uint32_t imu_filt_ms[10]{0};
+  // NavSat caches: 0 lat, 1 lon, 2 alt.
+  float navsat_raw_v[3]{0.0f};
+  bool navsat_has_raw[3]{false};
+  uint32_t navsat_raw_ms[3]{0};
+  float navsat_filt_v[3]{0.0f};
+  bool navsat_has_filt[3]{false};
+  uint32_t navsat_filt_ms[3]{0};
 };
 
 #ifdef USE_CAMERA
@@ -258,6 +286,7 @@ class Ros2Component : public Component {
   // stable across single- and multi-entity topics).
   void set_subscription_qos(const char *topic, const char *qos);
   void set_publication_qos(const char *topic, const char *qos);
+  void set_publication_raw(const char *topic, bool raw);
   void set_publication_frame_id(const char *topic, const char *frame_id);
   void set_range_params(const char *topic, uint8_t radiation_type, float field_of_view, float min_range,
                         float max_range, float variance);
@@ -285,10 +314,18 @@ class Ros2Component : public Component {
   void remember_level_(servo::Servo *servo, float level);
   float recalled_level_(servo::Servo *servo);
   void poll_publication_(Publication &pub);
+  void register_single_sensor_cache_(size_t idx);
+  void register_imu_cache_(size_t idx);
+  void register_navsat_cache_(size_t idx);
+  bool single_sample_(Publication &pub, float &out, uint32_t &sample_ms);
+  bool imu_sample_(Publication &pub, float *accel, float *gyro, float *orient, bool &have_orientation,
+                   uint32_t &sample_ms);
+  bool navsat_sample_(Publication &pub, float &lat, float &lon, float &alt, bool &have_alt,
+                      uint32_t &sample_ms);
   void poll_odom_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
   void poll_tf_(Publication &pub, const MiddlewareOptions &opts);
-  void poll_imu_(Publication &pub, const MiddlewareOptions &opts);
-  void poll_navsat_(Publication &pub, const MiddlewareOptions &opts);
+  void poll_imu_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
+  void poll_navsat_(Publication &pub, const MiddlewareOptions &opts, uint32_t now);
   void publish_tf_transform_(const std::string &topic, const MiddlewareOptions &opts, int32_t sec,
                              const char *frame_id, const char *child_frame_id, float x, float y,
                              float qz, float qw);

@@ -202,6 +202,11 @@ namespace esphome
       {
         if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE)
           ESP_LOGCONFIG(TAG, "  Image: %s (CompressedImage)", this->pubs_[i].topic.c_str());
+        if (this->pubs_[i].kind == PubKind::SENSOR_SINGLE || this->pubs_[i].kind == PubKind::IMU ||
+            this->pubs_[i].kind == PubKind::NAVSAT)
+          ESP_LOGCONFIG(TAG, "  Sensor: %s (%s, stale_skips=%u)", this->pubs_[i].topic.c_str(),
+                        this->pubs_[i].use_raw ? "raw" : "filtered",
+                        (unsigned) this->pubs_[i].stale_skips);
       }
     }
 
@@ -706,8 +711,12 @@ namespace esphome
       pub.kind = PubKind::SENSOR_SINGLE;
       pub.sensor = sensor;
       pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
-      this->pubs_[this->num_pubs_] = pub;
-      return this->num_pubs_++;
+      {
+        uint8_t idx = this->num_pubs_;
+        this->pubs_[idx] = pub;
+        this->register_single_sensor_cache_(idx);
+        return this->num_pubs_++;
+      }
 #endif
     }
 
@@ -950,6 +959,302 @@ namespace esphome
       }
     }
 
+    void Ros2Component::set_publication_raw(const char *topic, bool raw)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+          this->pubs_[i].use_raw = raw;
+      }
+    }
+
+    void Ros2Component::register_single_sensor_cache_(size_t idx)
+    {
+#ifdef USE_SENSOR
+      if (idx >= this->num_pubs_)
+        return;
+      Publication &pub = this->pubs_[idx];
+      if (pub.sensor == nullptr)
+        return;
+      sensor::Sensor *s = pub.sensor;
+      s->add_on_raw_state_callback([this, idx](float v) {
+        if (idx >= this->num_pubs_)
+          return;
+        Publication &p = this->pubs_[idx];
+        p.raw_state = v;
+        p.has_raw = true;
+        p.raw_ms = App.get_loop_component_start_time();
+      });
+      s->add_on_state_callback([this, idx](float v) {
+        if (idx >= this->num_pubs_)
+          return;
+        Publication &p = this->pubs_[idx];
+        p.filt_state = v;
+        p.has_filt = true;
+        p.filt_ms = App.get_loop_component_start_time();
+      });
+#else
+      (void) idx;
+#endif
+    }
+
+    void Ros2Component::register_imu_cache_(size_t idx)
+    {
+#ifdef USE_SENSOR
+      if (idx >= this->num_pubs_)
+        return;
+      Publication &pub = this->pubs_[idx];
+      if (pub.kind != PubKind::IMU)
+        return;
+      sensor::Sensor *slots[10];
+      for (int i = 0; i < 3; i++)
+        slots[i] = pub.imu_accel[i];
+      for (int i = 0; i < 3; i++)
+        slots[3 + i] = pub.imu_gyro[i];
+      for (int i = 0; i < 4; i++)
+        slots[6 + i] = pub.imu_orientation[i];
+      for (int slot = 0; slot < 10; slot++)
+      {
+        sensor::Sensor *s = slots[slot];
+        if (s == nullptr)
+          continue;
+        s->add_on_raw_state_callback([this, idx, slot](float v) {
+          if (idx >= this->num_pubs_ || slot < 0 || slot >= 10)
+            return;
+          Publication &p = this->pubs_[idx];
+          p.imu_raw[slot] = v;
+          p.imu_has_raw[slot] = true;
+          p.imu_raw_ms[slot] = App.get_loop_component_start_time();
+        });
+        s->add_on_state_callback([this, idx, slot](float v) {
+          if (idx >= this->num_pubs_ || slot < 0 || slot >= 10)
+            return;
+          Publication &p = this->pubs_[idx];
+          p.imu_filt[slot] = v;
+          p.imu_has_filt[slot] = true;
+          p.imu_filt_ms[slot] = App.get_loop_component_start_time();
+        });
+      }
+#else
+      (void) idx;
+#endif
+    }
+
+    void Ros2Component::register_navsat_cache_(size_t idx)
+    {
+#ifdef USE_SENSOR
+      if (idx >= this->num_pubs_)
+        return;
+      Publication &pub = this->pubs_[idx];
+      if (pub.kind != PubKind::NAVSAT)
+        return;
+      sensor::Sensor *slots[3] = {pub.navsat_lat, pub.navsat_lon, pub.navsat_alt};
+      for (int slot = 0; slot < 3; slot++)
+      {
+        sensor::Sensor *s = slots[slot];
+        if (s == nullptr)
+          continue;
+        s->add_on_raw_state_callback([this, idx, slot](float v) {
+          if (idx >= this->num_pubs_ || slot < 0 || slot >= 3)
+            return;
+          Publication &p = this->pubs_[idx];
+          p.navsat_raw_v[slot] = v;
+          p.navsat_has_raw[slot] = true;
+          p.navsat_raw_ms[slot] = App.get_loop_component_start_time();
+        });
+        s->add_on_state_callback([this, idx, slot](float v) {
+          if (idx >= this->num_pubs_ || slot < 0 || slot >= 3)
+            return;
+          Publication &p = this->pubs_[idx];
+          p.navsat_filt_v[slot] = v;
+          p.navsat_has_filt[slot] = true;
+          p.navsat_filt_ms[slot] = App.get_loop_component_start_time();
+        });
+      }
+#else
+      (void) idx;
+#endif
+    }
+
+    bool Ros2Component::single_sample_(Publication &pub, float &out, uint32_t &sample_ms)
+    {
+#ifdef USE_SENSOR
+      if (pub.use_raw)
+      {
+        if (pub.has_raw)
+        {
+          out = pub.raw_state;
+          sample_ms = pub.raw_ms;
+          return true;
+        }
+      }
+      else
+      {
+        if (pub.has_filt)
+        {
+          out = pub.filt_state;
+          sample_ms = pub.filt_ms;
+          return true;
+        }
+      }
+      if (pub.sensor != nullptr && pub.sensor->has_state())
+      {
+        out = pub.sensor->state;
+        sample_ms = App.get_loop_component_start_time();
+        return true;
+      }
+      return false;
+#else
+      (void) pub;
+      (void) out;
+      (void) sample_ms;
+      return false;
+#endif
+    }
+
+    bool Ros2Component::imu_sample_(Publication &pub, float *accel, float *gyro, float *orient,
+                                    bool &have_orientation, uint32_t &sample_ms)
+    {
+#ifdef USE_SENSOR
+      const bool raw = pub.use_raw;
+      uint32_t newest = 0;
+      for (int i = 0; i < 3; i++)
+      {
+        bool has = raw ? pub.imu_has_raw[i] : pub.imu_has_filt[i];
+        if (has)
+        {
+          accel[i] = raw ? pub.imu_raw[i] : pub.imu_filt[i];
+          uint32_t ms = raw ? pub.imu_raw_ms[i] : pub.imu_filt_ms[i];
+          if (ms > newest)
+            newest = ms;
+        }
+        else if (pub.imu_accel[i] != nullptr && pub.imu_accel[i]->has_state())
+        {
+          accel[i] = pub.imu_accel[i]->state;
+          newest = App.get_loop_component_start_time();
+        }
+        else
+        {
+          return false;
+        }
+      }
+      for (int i = 0; i < 3; i++)
+      {
+        bool has = raw ? pub.imu_has_raw[3 + i] : pub.imu_has_filt[3 + i];
+        if (has)
+        {
+          gyro[i] = raw ? pub.imu_raw[3 + i] : pub.imu_filt[3 + i];
+          uint32_t ms = raw ? pub.imu_raw_ms[3 + i] : pub.imu_filt_ms[3 + i];
+          if (ms > newest)
+            newest = ms;
+        }
+        else if (pub.imu_gyro[i] != nullptr && pub.imu_gyro[i]->has_state())
+        {
+          gyro[i] = pub.imu_gyro[i]->state;
+          newest = App.get_loop_component_start_time();
+        }
+        else
+        {
+          return false;
+        }
+      }
+      have_orientation = pub.imu_has_orientation;
+      if (have_orientation)
+      {
+        for (int i = 0; i < 4; i++)
+        {
+          bool has = raw ? pub.imu_has_raw[6 + i] : pub.imu_has_filt[6 + i];
+          if (has)
+          {
+            orient[i] = raw ? pub.imu_raw[6 + i] : pub.imu_filt[6 + i];
+            uint32_t ms = raw ? pub.imu_raw_ms[6 + i] : pub.imu_filt_ms[6 + i];
+            if (ms > newest)
+              newest = ms;
+          }
+          else if (pub.imu_orientation[i] != nullptr && pub.imu_orientation[i]->has_state())
+          {
+            orient[i] = pub.imu_orientation[i]->state;
+            newest = App.get_loop_component_start_time();
+          }
+          else
+          {
+            have_orientation = false;
+            break;
+          }
+        }
+      }
+      sample_ms = newest;
+      return true;
+#else
+      (void) pub;
+      (void) accel;
+      (void) gyro;
+      (void) orient;
+      (void) have_orientation;
+      (void) sample_ms;
+      return false;
+#endif
+    }
+
+    bool Ros2Component::navsat_sample_(Publication &pub, float &lat, float &lon, float &alt, bool &have_alt,
+                                       uint32_t &sample_ms)
+    {
+#ifdef USE_SENSOR
+      const bool raw = pub.use_raw;
+      uint32_t newest = 0;
+      sensor::Sensor *sensors[3] = {pub.navsat_lat, pub.navsat_lon, pub.navsat_alt};
+      float *outs[3] = {&lat, &lon, &alt};
+      for (int i = 0; i < 2; i++)
+      {
+        bool has = raw ? pub.navsat_has_raw[i] : pub.navsat_has_filt[i];
+        if (has)
+        {
+          *outs[i] = raw ? pub.navsat_raw_v[i] : pub.navsat_filt_v[i];
+          uint32_t ms = raw ? pub.navsat_raw_ms[i] : pub.navsat_filt_ms[i];
+          if (ms > newest)
+            newest = ms;
+        }
+        else if (sensors[i] != nullptr && sensors[i]->has_state())
+        {
+          *outs[i] = sensors[i]->state;
+          newest = App.get_loop_component_start_time();
+        }
+        else
+        {
+          return false;
+        }
+      }
+      have_alt = false;
+      bool has = raw ? pub.navsat_has_raw[2] : pub.navsat_has_filt[2];
+      if (has)
+      {
+        alt = raw ? pub.navsat_raw_v[2] : pub.navsat_filt_v[2];
+        uint32_t ms = raw ? pub.navsat_raw_ms[2] : pub.navsat_filt_ms[2];
+        if (ms > newest)
+          newest = ms;
+        have_alt = true;
+      }
+      else if (sensors[2] != nullptr && sensors[2]->has_state())
+      {
+        alt = sensors[2]->state;
+        newest = App.get_loop_component_start_time();
+        have_alt = true;
+      }
+      sample_ms = newest;
+      return true;
+#else
+      (void) pub;
+      (void) lat;
+      (void) lon;
+      (void) alt;
+      (void) have_alt;
+      (void) sample_ms;
+      return false;
+#endif
+    }
+
     void Ros2Component::set_publication_frame_id(const char *topic, const char *frame_id)
     {
       if (topic == nullptr || frame_id == nullptr)
@@ -1027,8 +1332,12 @@ namespace esphome
       pub.kind = PubKind::SENSOR_SINGLE;
       pub.sensor = sensor;
       pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
-      this->pubs_[this->num_pubs_] = pub;
-      return this->num_pubs_++;
+      {
+        uint8_t idx = this->num_pubs_;
+        this->pubs_[idx] = pub;
+        this->register_single_sensor_cache_(idx);
+        return this->num_pubs_++;
+      }
 #endif
     }
 
@@ -1055,8 +1364,12 @@ namespace esphome
       pub.kind = PubKind::SENSOR_SINGLE;
       pub.sensor = sensor;
       pub.interval_ms = interval_ms != 0 ? interval_ms : this->default_interval_ms_;
-      this->pubs_[this->num_pubs_] = pub;
-      return this->num_pubs_++;
+      {
+        uint8_t idx = this->num_pubs_;
+        this->pubs_[idx] = pub;
+        this->register_single_sensor_cache_(idx);
+        return this->num_pubs_++;
+      }
 #endif
     }
 
@@ -1162,6 +1475,7 @@ namespace esphome
           this->pubs_[i].imu_gyro[0] = gx;
           this->pubs_[i].imu_gyro[1] = gy;
           this->pubs_[i].imu_gyro[2] = gz;
+          this->register_imu_cache_(i);
         }
       }
     }
@@ -1180,6 +1494,7 @@ namespace esphome
           this->pubs_[i].imu_orientation[2] = oz;
           this->pubs_[i].imu_orientation[3] = ow;
           this->pubs_[i].imu_has_orientation = true;
+          this->register_imu_cache_(i);
         }
       }
     }
@@ -1220,6 +1535,7 @@ namespace esphome
         {
           this->pubs_[i].navsat_lat = lat;
           this->pubs_[i].navsat_lon = lon;
+          this->register_navsat_cache_(i);
         }
       }
     }
@@ -1233,6 +1549,7 @@ namespace esphome
         if (this->pubs_[i].topic == topic && this->pubs_[i].kind == PubKind::NAVSAT)
         {
           this->pubs_[i].navsat_alt = alt;
+          this->register_navsat_cache_(i);
         }
       }
     }
@@ -1295,7 +1612,6 @@ namespace esphome
       const uint32_t now = App.get_loop_component_start_time();
       if (now - pub.last_pub < pub.interval_ms)
         return;
-      pub.last_pub = now;
       if (pub.type == nullptr)
         return;
       MiddlewareOptions opts;
@@ -1304,10 +1620,20 @@ namespace esphome
       if (strcmp(pub.type->name, "std_msgs/Float32") == 0)
       {
 #ifdef USE_SENSOR
-        if (pub.sensor == nullptr || !pub.sensor->has_state())
+        float v = 0.0f;
+        uint32_t sample_ms = 0;
+        if (!this->single_sample_(pub, v, sample_ms))
           return;
+        if (pub.has_sent && sample_ms == pub.last_sent_sample_ms)
+        {
+          pub.stale_skips++;
+          return;
+        }
+        pub.last_pub = now;
+        pub.last_sent_sample_ms = sample_ms;
+        pub.has_sent = true;
         Float32Msg msg;
-        msg.data = pub.sensor->state;
+        msg.data = v;
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
       }
@@ -1331,10 +1657,14 @@ namespace esphome
         }
 #endif
         if (have)
+        {
+          pub.last_pub = now;
           this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
+        }
       }
       else if (strcmp(pub.type->name, "sensor_msgs/JointState") == 0)
       {
+        pub.last_pub = now;
         JointStateMsg msg;
         memset(&msg, 0, sizeof(msg));
         this->fill_header_(msg.header, pub.frame_id);
@@ -1351,8 +1681,18 @@ namespace esphome
       else if (strcmp(pub.type->name, "sensor_msgs/Range") == 0)
       {
 #ifdef USE_SENSOR
-        if (pub.sensor == nullptr || !pub.sensor->has_state())
+        float v = 0.0f;
+        uint32_t sample_ms = 0;
+        if (!this->single_sample_(pub, v, sample_ms))
           return;
+        if (pub.has_sent && sample_ms == pub.last_sent_sample_ms)
+        {
+          pub.stale_skips++;
+          return;
+        }
+        pub.last_pub = now;
+        pub.last_sent_sample_ms = sample_ms;
+        pub.has_sent = true;
         RangeMsg msg;
         memset(&msg, 0, sizeof(msg));
         this->fill_header_(msg.header, pub.frame_id);
@@ -1360,7 +1700,7 @@ namespace esphome
         msg.field_of_view = pub.field_of_view;
         msg.min_range = pub.min_range;
         msg.max_range = pub.max_range;
-        msg.range = pub.sensor->state;
+        msg.range = v;
         msg.variance = pub.range_variance;
         this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #endif
@@ -1368,12 +1708,22 @@ namespace esphome
       else if (strcmp(pub.type->name, "sensor_msgs/BatteryState") == 0)
       {
 #ifdef USE_SENSOR
-        if (pub.sensor == nullptr || !pub.sensor->has_state())
+        float cached = 0.0f;
+        uint32_t sample_ms = 0;
+        if (!this->single_sample_(pub, cached, sample_ms))
           return;
+        if (pub.has_sent && sample_ms == pub.last_sent_sample_ms)
+        {
+          pub.stale_skips++;
+          return;
+        }
+        pub.last_pub = now;
+        pub.last_sent_sample_ms = sample_ms;
+        pub.has_sent = true;
         BatteryStateMsg msg;
         memset(&msg, 0, sizeof(msg));
         this->fill_header_(msg.header, pub.frame_id);
-        const float volts = pub.sensor->state;
+        const float volts = cached;
         msg.voltage = volts;
         msg.temperature = NAN;
         msg.current = NAN;
@@ -1403,25 +1753,28 @@ namespace esphome
       }
       else if (strcmp(pub.type->name, "nav_msgs/Odometry") == 0)
       {
+        pub.last_pub = now;
         this->poll_odom_(pub, opts, now);
       }
       else if (strcmp(pub.type->name, "tf2_msgs/TFMessage") == 0)
       {
+        pub.last_pub = now;
         this->poll_tf_(pub, opts);
       }
       else if (strcmp(pub.type->name, "sensor_msgs/Imu") == 0)
       {
-        this->poll_imu_(pub, opts);
+        this->poll_imu_(pub, opts, now);
       }
       else if (strcmp(pub.type->name, "sensor_msgs/NavSatFix") == 0)
       {
-        this->poll_navsat_(pub, opts);
+        this->poll_navsat_(pub, opts, now);
       }
       else if (strcmp(pub.type->name, "std_msgs/ColorRGBA") == 0)
       {
 #ifdef USE_LIGHT
         if (pub.kind != PubKind::LIGHT_SINGLE || pub.light == nullptr)
           return;
+        pub.last_pub = now;
         ColorRGBAMsg msg;
         if (pub.light_field == LightField::BRIGHTNESS)
         {
@@ -1538,57 +1891,48 @@ namespace esphome
       this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
     }
 
-    void Ros2Component::poll_imu_(Publication &pub, const MiddlewareOptions &opts)
+    void Ros2Component::poll_imu_(Publication &pub, const MiddlewareOptions &opts, uint32_t now)
     {
       if (pub.kind != PubKind::IMU)
         return;
 #ifdef USE_SENSOR
-      // All six accel/gyro axes are required; skip until every axis has
-      // state (mirrors Range/BatteryState). Orientation is optional.
-      for (uint8_t i = 0; i < 3; i++)
+      if (now - pub.last_pub < pub.interval_ms)
+        return;
+      float accel[3]{0.0f};
+      float gyro[3]{0.0f};
+      float orient[4]{0.0f};
+      bool have_orientation = false;
+      uint32_t sample_ms = 0;
+      if (!this->imu_sample_(pub, accel, gyro, orient, have_orientation, sample_ms))
+        return;
+      if (pub.has_sent && sample_ms == pub.last_sent_sample_ms)
       {
-        if (pub.imu_accel[i] == nullptr || !pub.imu_accel[i]->has_state())
-          return;
-        if (pub.imu_gyro[i] == nullptr || !pub.imu_gyro[i]->has_state())
-          return;
+        pub.stale_skips++;
+        return;
       }
+      pub.last_pub = now;
+      pub.last_sent_sample_ms = sample_ms;
+      pub.has_sent = true;
       ImuMsg msg;
       memset(&msg, 0, sizeof(msg));
       this->fill_header_(msg.header, pub.frame_id);
-      msg.linear_acceleration[0] = pub.imu_accel[0]->state;
-      msg.linear_acceleration[1] = pub.imu_accel[1]->state;
-      msg.linear_acceleration[2] = pub.imu_accel[2]->state;
-      msg.angular_velocity[0] = pub.imu_gyro[0]->state;
-      msg.angular_velocity[1] = pub.imu_gyro[1]->state;
-      msg.angular_velocity[2] = pub.imu_gyro[2]->state;
-      // Covariances unknown: zeros. Orientation without a source publishes
-      // 0,0,0,0 with covariance[0] = -1 ("no estimate") per the IDL.
+      msg.linear_acceleration[0] = accel[0];
+      msg.linear_acceleration[1] = accel[1];
+      msg.linear_acceleration[2] = accel[2];
+      msg.angular_velocity[0] = gyro[0];
+      msg.angular_velocity[1] = gyro[1];
+      msg.angular_velocity[2] = gyro[2];
       msg.orientation_covariance[0] = -1.0f;
-      bool have_orientation = pub.imu_has_orientation;
       if (have_orientation)
       {
-        for (uint8_t i = 0; i < 4; i++)
-        {
-          if (pub.imu_orientation[i] == nullptr || !pub.imu_orientation[i]->has_state())
-          {
-            have_orientation = false;
-            break;
-          }
-        }
-      }
-      if (have_orientation)
-      {
-        float qx = pub.imu_orientation[0]->state;
-        float qy = pub.imu_orientation[1]->state;
-        float qz = pub.imu_orientation[2]->state;
-        float qw = pub.imu_orientation[3]->state;
-        float n = sqrtf(qx * qx + qy * qy + qz * qz + qw * qw);
+        float n = sqrtf(orient[0] * orient[0] + orient[1] * orient[1] + orient[2] * orient[2] +
+                        orient[3] * orient[3]);
         if (n > 0.0f)
         {
-          msg.orientation[0] = qx / n;
-          msg.orientation[1] = qy / n;
-          msg.orientation[2] = qz / n;
-          msg.orientation[3] = qw / n;
+          msg.orientation[0] = orient[0] / n;
+          msg.orientation[1] = orient[1] / n;
+          msg.orientation[2] = orient[2] / n;
+          msg.orientation[3] = orient[3] / n;
         }
         else
         {
@@ -1600,38 +1944,46 @@ namespace esphome
 #else
       (void) pub;
       (void) opts;
+      (void) now;
 #endif
     }
 
-    void Ros2Component::poll_navsat_(Publication &pub, const MiddlewareOptions &opts)
+    void Ros2Component::poll_navsat_(Publication &pub, const MiddlewareOptions &opts, uint32_t now)
     {
       if (pub.kind != PubKind::NAVSAT)
         return;
 #ifdef USE_SENSOR
-      // Latitude + longitude are required; skip until both have state
-      // (mirrors Range/BatteryState). A skipped poll reads as NO_FIX
-      // downstream; published samples carry STATUS_FIX + SERVICE_GPS.
-      if (pub.navsat_lat == nullptr || !pub.navsat_lat->has_state())
+      if (now - pub.last_pub < pub.interval_ms)
         return;
-      if (pub.navsat_lon == nullptr || !pub.navsat_lon->has_state())
+      float lat = 0.0f;
+      float lon = 0.0f;
+      float alt = NAN;
+      bool have_alt = false;
+      uint32_t sample_ms = 0;
+      if (!this->navsat_sample_(pub, lat, lon, alt, have_alt, sample_ms))
         return;
+      if (pub.has_sent && sample_ms == pub.last_sent_sample_ms)
+      {
+        pub.stale_skips++;
+        return;
+      }
+      pub.last_pub = now;
+      pub.last_sent_sample_ms = sample_ms;
+      pub.has_sent = true;
       NavSatFixMsg msg;
       memset(&msg, 0, sizeof(msg));
       this->fill_header_(msg.header, pub.frame_id);
-      msg.status = 0;   // STATUS_FIX (unaugmented fix)
-      msg.service = 1;  // SERVICE_GPS
-      msg.latitude = pub.navsat_lat->state;
-      msg.longitude = pub.navsat_lon->state;
-      if (pub.navsat_alt != nullptr && pub.navsat_alt->has_state())
-        msg.altitude = pub.navsat_alt->state;
-      else
-        msg.altitude = NAN;
-      // Covariance unknown: zeros + UNKNOWN type (fuse on the host).
+      msg.status = 0;
+      msg.service = 1;
+      msg.latitude = lat;
+      msg.longitude = lon;
+      msg.altitude = have_alt ? alt : NAN;
       msg.position_covariance_type = 0;
       this->mw_->publish(pub.topic, pub.type, &msg, sizeof(msg), &opts);
 #else
       (void) pub;
       (void) opts;
+      (void) now;
 #endif
     }
 

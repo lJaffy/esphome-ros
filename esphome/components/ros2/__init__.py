@@ -1,7 +1,10 @@
+import logging
 import math
 import re
+from collections.abc import Iterator
 
 import esphome.codegen as cg
+from esphome import final_validate as fv
 from esphome.components import binary_sensor as bs_comp
 from esphome.components.binary_sensor import BinarySensor
 from esphome.components.esp32_camera import ESP32Camera
@@ -11,8 +14,17 @@ from esphome.components.servo import Servo
 from esphome.components.switch import Switch
 from esphome.components import time as time_comp
 import esphome.config_validation as cv
-from esphome.const import CONF_ID, CONF_INTERVAL, CONF_TIME_ID, CONF_TOPIC, CONF_TYPE
+from esphome.const import (
+    CONF_ID,
+    CONF_INTERVAL,
+    CONF_TIME_ID,
+    CONF_TOPIC,
+    CONF_TYPE,
+    CONF_UPDATE_INTERVAL,
+)
 from esphome.types import ConfigType
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _auto_load(config=None):
@@ -106,6 +118,7 @@ CONF_ORIENTATION_X = "orientation_x"
 CONF_ORIENTATION_Y = "orientation_y"
 CONF_ORIENTATION_Z = "orientation_z"
 CONF_ORIENTATION_W = "orientation_w"
+CONF_RAW = "raw"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -514,6 +527,10 @@ def _validate_publication(config: ConfigType) -> ConfigType:
     if CONF_MIN_VOLTAGE in config or CONF_MAX_VOLTAGE in config:
         if config.get(CONF_MIN_VOLTAGE, 0.0) >= config.get(CONF_MAX_VOLTAGE, 0.0):
             raise cv.Invalid("min_voltage: must be below max_voltage:")
+    if config.get(CONF_RAW, False):
+        sensor_backed = ("std_msgs/Float32", *TELEMETRY_TYPES, *IMU_TYPES, *GPS_TYPES)
+        if type_ not in sensor_backed:
+            raise cv.Invalid(f"{CONF_RAW}: only valid with sensor-backed types {list(sensor_backed)}")
     return config
 
 
@@ -527,6 +544,7 @@ PUBLICATION_SCHEMA = cv.All(
                 cv.Schema({cv.Required("servo"): _servo_target_schema()})
             ),
             cv.Optional(CONF_INTERVAL): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_RAW, default=False): cv.boolean,
             cv.Optional(CONF_FRAME_ID): _frame_id,
             cv.Optional(CONF_QOS): cv.one_of(*QOS_LEVELS),
             cv.Optional(CONF_CHILD_FRAME_ID): _frame_id,
@@ -558,6 +576,69 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_TIME_ID): cv.use_id(time_comp.RealTimeClock),
     }
 ).extend(cv.COMPONENT_SCHEMA)
+
+
+_IMU_SENSOR_KEYS = (
+    CONF_ACCEL_X, CONF_ACCEL_Y, CONF_ACCEL_Z,
+    CONF_GYRO_X, CONF_GYRO_Y, CONF_GYRO_Z,
+    CONF_ORIENTATION_X, CONF_ORIENTATION_Y,
+    CONF_ORIENTATION_Z, CONF_ORIENTATION_W,
+)
+_GPS_SENSOR_KEYS = (CONF_LATITUDE, CONF_LONGITUDE, CONF_ALTITUDE)
+
+
+def _iter_publication_sensor_ids(pub: ConfigType) -> Iterator[str]:
+    source = pub.get(CONF_SOURCE)
+    if not source:
+        return
+    if (ref := source.get("sensor")) is not None:
+        yield ref[CONF_ID]
+    if (imu := source.get(CONF_IMU)) is not None:
+        for key in _IMU_SENSOR_KEYS:
+            if (ref := imu.get(key)) is not None:
+                yield ref[CONF_ID]
+    if (gps := source.get(CONF_GPS)) is not None:
+        for key in _GPS_SENSOR_KEYS:
+            if (ref := gps.get(key)) is not None:
+                yield ref[CONF_ID]
+
+
+def _final_validate(config: ConfigType) -> None:
+    pubs = config.get(CONF_PUBLICATIONS, [])
+    if not pubs:
+        return
+    try:
+        fconf = fv.full_config.get()
+    except LookupError:
+        return
+    default_interval = config.get(CONF_DEFAULT_PUBLISH_INTERVAL)
+    for pub in pubs:
+        if pub.get(CONF_TYPE) not in ("std_msgs/Float32", *TELEMETRY_TYPES, *IMU_TYPES, *GPS_TYPES):
+            continue
+        interval = pub.get(CONF_INTERVAL, default_interval)
+        if interval is None:
+            continue
+        for sensor_id in _iter_publication_sensor_ids(pub):
+            try:
+                sensor_path = fconf.get_path_for_id(sensor_id)[:-1]
+                sensor_config = fconf.get_config_for_path(sensor_path)
+            except KeyError:
+                continue
+            update_interval = sensor_config.get(CONF_UPDATE_INTERVAL)
+            if update_interval is None or interval >= update_interval:
+                continue
+            _LOGGER.warning(
+                "ros2 publication '%s' publishes every %s but sensor '%s' only "
+                "updates every %s: ROS will republish stale values. Set the "
+                "sensor's update_interval to %s or faster, and add "
+                "'filters: [{throttle: %s}]' to keep Home Assistant traffic "
+                "unchanged (pairs with 'raw: true').",
+                pub.get(CONF_TOPIC), interval, sensor_id, update_interval,
+                interval, update_interval,
+            )
+
+
+FINAL_VALIDATE_SCHEMA = _final_validate
 
 
 async def to_code(config: ConfigType) -> None:
@@ -702,6 +783,8 @@ async def to_code(config: ConfigType) -> None:
                 )
         if (qos := pub.get(CONF_QOS)) is not None:
             cg.add(var.set_publication_qos(topic, qos))
+        if pub.get(CONF_RAW, False):
+            cg.add(var.set_publication_raw(topic, True))
         if (frame_id := pub.get(CONF_FRAME_ID)) is not None:
             cg.add(var.set_publication_frame_id(topic, frame_id))
         if type_ == "sensor_msgs/Range":
