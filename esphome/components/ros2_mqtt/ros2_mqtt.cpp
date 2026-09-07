@@ -1,5 +1,9 @@
 #include "ros2_mqtt.h"
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
 #include "esphome/components/mqtt/mqtt_client.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
@@ -13,12 +17,10 @@ namespace ros2_mqtt {
 
 static const char *const TAG = "ros2_mqtt";
 
-// Single-payload budget: UXGA/q14 JPEGs land ~80-150 kB (-> ~110-200 kB
-// base64). Anything larger risks a >250 kB contiguous std::string, which the
-// S3 loop heap cannot reliably provide alongside WiFi/MQTT/camera buffers.
-static constexpr size_t ROS2_MQTT_MAX_JPEG_BYTES = 192 * 1024;
-// Keep headroom for the MQTT client's own copy plus WiFi/TLS churn.
-static constexpr size_t ROS2_MQTT_HEAP_MARGIN_BYTES = 60 * 1024;
+// ESP32 MQTT backend caps payloads at 64 KiB (QueueElement.payload_len is
+// uint16_t) and std::string lives in internal heap, which fragments under
+// WiFi/camera load. Build image JSON in PSRAM and stay well under the cap.
+static constexpr size_t ROS2_MQTT_MAX_PAYLOAD_BYTES = 60 * 1024;
 
 static const char K_B64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -83,18 +85,11 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
                                       const ros2::MiddlewareOptions *opts) {
   if (jpeg == nullptr || len == 0)
     return false;
-  // Zero-copy base64-in-JSON: the old path built a ~200 kB b64 std::string
-  // via per-char push_back (realloc storm) then copied it into a second
-  // ~200 kB payload -> ~400 kB transient + the MQTT client's own copy, which
-  // aborted the S3 loop task in __cxa_allocate_exception. Encode straight
-  // into one reserved payload instead. Base64 output needs no escaping (no
-  // '"' or '\\' in the alphabet); frame_id is restricted to [A-Za-z0-9/_-]
-  // at validation so it needs none either.
-  if (len > ROS2_MQTT_MAX_JPEG_BYTES) {
-    ESP_LOGW(TAG, "Image %u bytes exceeds %u byte MQTT budget; dropping", (unsigned) len,
-             (unsigned) ROS2_MQTT_MAX_JPEG_BYTES);
+  // No std::string payload: large image JSON does not fit internal heap once
+  // fragmented, and the ESP32 MQTT backend rejects anything over 64 KiB
+  // anyway. Build one PSRAM buffer, base64 straight into it.
+  if (mqtt::global_mqtt_client == nullptr)
     return false;
-  }
   int32_t sec = 0;
   uint32_t nsec = 0;
   const char *frame_id = "";
@@ -104,30 +99,33 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
     if (opts->frame_id != nullptr)
       frame_id = opts->frame_id;
   }
-  std::string prefix = "{\"header\":{\"stamp\":{\"sec\":";
-  prefix += std::to_string(sec);
-  prefix += ",\"nanosec\":";
-  prefix += std::to_string(nsec);
-  prefix += "},\"frame_id\":\"";
-  prefix += frame_id;
-  prefix += "\"},\"format\":\"jpeg\",\"data\":\"";
+  char stamp[224];
+  snprintf(stamp, sizeof(stamp), "{\"header\":{\"stamp\":{\"sec\":%d,\"nanosec\":%u},\"frame_id\":\"%s\"},"
+                                "\"format\":\"jpeg\",\"data\":\"",
+           sec, nsec, frame_id);
   static const char kSuffix[] = "\"}";
+  const size_t prefix_len = strlen(stamp);
   const size_t b64_len = ((len + 2) / 3) * 4;
-  const size_t need = prefix.size() + b64_len + sizeof(kSuffix);
-#ifdef ROS2_MQTT_HAVE_HEAP_CAPS
-  const size_t free_heap = heap_caps_get_free_size(MALLOC_CAP_DEFAULT);
-  if (free_heap < need + ROS2_MQTT_HEAP_MARGIN_BYTES) {
-    ESP_LOGW(TAG, "Low heap (%u free, need ~%u); dropping %u byte image", (unsigned) free_heap,
+  const size_t need = prefix_len + b64_len + (sizeof(kSuffix) - 1);
+  if (need > ROS2_MQTT_MAX_PAYLOAD_BYTES) {
+    ESP_LOGW(TAG, "Image JSON ~%u bytes exceeds 60 kB MQTT budget (JPEG %u bytes); dropping "
+                  "(lower resolution/jpeg_quality)",
              (unsigned) need, (unsigned) len);
     return false;
   }
+#ifdef ROS2_MQTT_HAVE_HEAP_CAPS
+  char *buf = static_cast<char *>(heap_caps_malloc(need + 1, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+  if (buf == nullptr)
+    buf = static_cast<char *>(heap_caps_malloc(need + 1, MALLOC_CAP_DEFAULT));
+#else
+  char *buf = static_cast<char *>(malloc(need + 1));
 #endif
-  std::string payload;
-  payload.reserve(need);
-  payload += prefix;
-  const size_t out_start = payload.size();
-  payload.resize(out_start + b64_len);
-  char *out = &payload[out_start];
+  if (buf == nullptr) {
+    ESP_LOGW(TAG, "Out of memory for ~%u byte image JSON; dropping", (unsigned) need);
+    return false;
+  }
+  memcpy(buf, stamp, prefix_len);
+  char *out = buf + prefix_len;
   size_t o = 0;
   size_t i = 0;
   while (i + 3 <= len) {
@@ -153,10 +151,19 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
     out[o++] = K_B64[(triple >> 6) & 0x3F];
     out[o++] = '=';
   }
-  payload += kSuffix;
+  memcpy(out + o, kSuffix, sizeof(kSuffix) - 1);
+  buf[need] = '\0';
   // Never retained: a stale frame must not replay to late subscribers.
-  return this->CustomMQTTDevice::publish(this->expand_prefix_(topic), payload,
-                                         this->effective_qos_(opts), false);
+  // Raw publish: backend copies into its (PSRAM-preferred) queue, so buf can
+  // be freed on return.
+  bool ok = mqtt::global_mqtt_client->publish(this->expand_prefix_(topic).c_str(), buf, need,
+                                              this->effective_qos_(opts), false);
+#ifdef ROS2_MQTT_HAVE_HEAP_CAPS
+  heap_caps_free(buf);
+#else
+  free(buf);
+#endif
+  return ok;
 }
 
 bool Ros2MqttComponent::connected() const {
