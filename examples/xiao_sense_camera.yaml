@@ -1,11 +1,16 @@
 # CompressedImage snapshot publisher for the Xiao ESP32S3 Sense (OV2640).
 # Push path: esp32_camera captures per idle_framerate, Ros2Component listens
 # via camera::CameraListener and publishes sensor_msgs/CompressedImage as
-# base64-in-JSON, throttled by interval. QoS 0, never retained.
+# base64-in-JSON (default), throttled by interval. QoS 0, never retained.
+# use_b64: false publishes raw JPEG bytes as the MQTT payload instead: no
+# base64 CPU, ~25% less bandwidth, but the subscriber must wrap the bytes
+# into sensor_msgs/CompressedImage itself (stamp/frame live on the ROS side).
 # Keep frames small for a constrained link: VGA 640x480 at jpeg_quality 20
 # (~15-25 kB JPEG -> ~20-35 kB JSON) is the stable default. Larger
-# (XGA/UXGA) now sends instead of being dropped, but risks MQTT
+# (XGA/UXGA) sends instead of being dropped, but risks MQTT
 # congestion and slow loop warnings.
+# Verify: mosquitto_sub -h 192.168.1.10 -t 'digitaltwin/xiao-sense/#' | head -c 200
+# Raw: mosquitto_sub -h 192.168.1.10 -t 'digitaltwin/xiao-sense/#' --raw -o frame.jpg && file frame.jpg
 esphome:
   name: xiao-sense-cam
   friendly_name: Xiao Sense Cam
@@ -70,3 +75,4 @@ ros2:
         camera:
           id: sense_camera
       interval: 5s
+      # use_b64: false  # raw JPEG bytes on the MQTT payload (needs a ROS-side bridge)

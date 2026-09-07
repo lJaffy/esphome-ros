@@ -75,6 +75,7 @@ namespace esphome
       opts.reliable = pub.reliable;
       opts.qos_explicit = pub.qos_explicit;
       opts.frame_id = pub.frame_id;
+      opts.use_b64 = pub.use_b64;
 #ifdef USE_TIME
       if (this->time_ != nullptr)
       {
@@ -967,6 +968,17 @@ namespace esphome
       {
         if (this->pubs_[i].topic == topic)
           this->pubs_[i].use_raw = raw;
+      }
+    }
+
+    void Ros2Component::set_publication_use_b64(const char *topic, bool use_b64)
+    {
+      if (topic == nullptr)
+        return;
+      for (size_t i = 0; i < this->num_pubs_; i++)
+      {
+        if (this->pubs_[i].topic == topic)
+          this->pubs_[i].use_b64 = use_b64;
       }
     }
 

@@ -84,10 +84,20 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
                                       const ros2::MiddlewareOptions *opts) {
   if (jpeg == nullptr || len == 0)
     return false;
-  // No std::string payload: large image JSON does not fit internal heap once
-  // fragmented. Build one PSRAM buffer, base64 straight into it.
   if (mqtt::global_mqtt_client == nullptr)
     return false;
+  // Raw mode (use_b64: false): publish JPEG bytes straight as the MQTT
+  // payload. No base64 CPU, ~25% less bandwidth, no envelope alloc here (the
+  // backend copies into its own PSRAM-preferred queue). The subscriber is
+  // responsible for wrapping into sensor_msgs/CompressedImage (stamp/frame
+  // live on the ROS side, e.g. receive time); never retained.
+  if (opts != nullptr && !opts->use_b64) {
+    return mqtt::global_mqtt_client->publish(this->expand_prefix_(topic).c_str(),
+                                             reinterpret_cast<const char *>(jpeg), len,
+                                             this->effective_qos_(opts), false);
+  }
+  // No std::string payload: large image JSON does not fit internal heap once
+  // fragmented. Build one PSRAM buffer, base64 straight into it.
   int32_t sec = 0;
   uint32_t nsec = 0;
   const char *frame_id = "";

@@ -207,6 +207,9 @@ struct Publication {
   // publish at the ROS interval while Home Assistant keeps its own
   // update_interval / throttle cadence. Static-only, loop-thread only.
   bool use_raw{false};
+  // Image encoding for IMAGE_SINGLE: true (default) base64-in-JSON,
+  // false raw JPEG bytes on the MQTT payload.
+  bool use_b64{true};
   float raw_state{0.0f};
   bool has_raw{false};
   uint32_t raw_ms{0};
@@ -287,6 +290,7 @@ class Ros2Component : public Component {
   void set_subscription_qos(const char *topic, const char *qos);
   void set_publication_qos(const char *topic, const char *qos);
   void set_publication_raw(const char *topic, bool raw);
+  void set_publication_use_b64(const char *topic, bool use_b64);
   void set_publication_frame_id(const char *topic, const char *frame_id);
   void set_range_params(const char *topic, uint8_t radiation_type, float field_of_view, float min_range,
                         float max_range, float variance);

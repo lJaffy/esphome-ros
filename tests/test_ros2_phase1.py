@@ -572,3 +572,21 @@ def test_optional_entity_includes_guarded(ros2):
         if m:
             assert stack and (stack[-1] or "").startswith("USE_"), \
                 f"{m.group(1)} include outside USE_* guard"
+
+
+def test_use_b64_defaults_true(ros2):
+    cfg = _pub(ros2, type="sensor_msgs/CompressedImage",
+               source={"camera": {"id": "cam"}})
+    assert cfg["use_b64"] is True
+
+
+def test_use_b64_false_accepted_on_image(ros2):
+    cfg = _pub(ros2, type="sensor_msgs/CompressedImage",
+               source={"camera": {"id": "cam"}}, use_b64=False)
+    assert cfg["use_b64"] is False
+
+
+def test_use_b64_rejected_off_image(ros2):
+    with pytest.raises(Exception):
+        _pub(ros2, type="std_msgs/Float32",
+             source={"sensor": {"id": "s"}}, use_b64=False)

@@ -26,6 +26,12 @@ struct MiddlewareOptions {
   // best_effort selects qos 0 on MQTT and BEST_EFFORT DDS endpoints.
   bool reliable{true};
   bool qos_explicit{false};
+  // Image encoding: true (default) publishes base64-in-JSON (matches the
+  // rosbridge-style CompressedImage wire format). False publishes raw JPEG
+  // bytes as the MQTT payload (no header/stamp on the wire; the subscriber
+  // bridges into sensor_msgs/CompressedImage). Only meaningful for images;
+  // transports without a JSON envelope (e.g. XRCE-DDS) ignore it.
+  bool use_b64{true};
 };
 
 using SampleCallback = std::function<void(const void *sample, size_t len)>;

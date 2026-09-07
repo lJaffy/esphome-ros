@@ -119,6 +119,7 @@ CONF_ORIENTATION_Y = "orientation_y"
 CONF_ORIENTATION_Z = "orientation_z"
 CONF_ORIENTATION_W = "orientation_w"
 CONF_RAW = "raw"
+CONF_USE_B64 = "use_b64"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -531,6 +532,10 @@ def _validate_publication(config: ConfigType) -> ConfigType:
         sensor_backed = ("std_msgs/Float32", *TELEMETRY_TYPES, *IMU_TYPES, *GPS_TYPES)
         if type_ not in sensor_backed:
             raise cv.Invalid(f"{CONF_RAW}: only valid with sensor-backed types {list(sensor_backed)}")
+    # Note: the schema default (True) is injected into every publication by
+    # voluptuous, so only an explicit `use_b64: false` is constrained here.
+    if not config.get(CONF_USE_B64, True) and type_ not in IMAGE_TYPES:
+        raise cv.Invalid(f"{CONF_USE_B64}: false is only valid with {IMAGE_TYPES}")
     return config
 
 
@@ -545,6 +550,7 @@ PUBLICATION_SCHEMA = cv.All(
             ),
             cv.Optional(CONF_INTERVAL): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_RAW, default=False): cv.boolean,
+            cv.Optional(CONF_USE_B64, default=True): cv.boolean,
             cv.Optional(CONF_FRAME_ID): _frame_id,
             cv.Optional(CONF_QOS): cv.one_of(*QOS_LEVELS),
             cv.Optional(CONF_CHILD_FRAME_ID): _frame_id,
@@ -785,6 +791,8 @@ async def to_code(config: ConfigType) -> None:
             cg.add(var.set_publication_qos(topic, qos))
         if pub.get(CONF_RAW, False):
             cg.add(var.set_publication_raw(topic, True))
+        if not pub.get(CONF_USE_B64, True):
+            cg.add(var.set_publication_use_b64(topic, False))
         if (frame_id := pub.get(CONF_FRAME_ID)) is not None:
             cg.add(var.set_publication_frame_id(topic, frame_id))
         if type_ == "sensor_msgs/Range":

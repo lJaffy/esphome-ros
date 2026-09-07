@@ -45,7 +45,7 @@ Limits: 16 subscriptions, 16 publications, 16 targets/sources per topic, 16 join
 1. **Robot actuator (subscribe):** drive servos from `/joint_states` or `/joint_trajectory`, single `Float32` → one servo, `Bool` → switch.
 2. **Sensor telemetry (publish):** `sensor` → `Float32`, `switch`/`binary_sensor` → `Bool`, servo positions → `JointState` echo.
 3. **RGB signaling (bidirectional):** `ColorRGBA` ↔ `light`, `Joy` → `light` for gamepad control.
-4. **Vision (publish-only push):** `camera` → `CompressedImage` (base64-in-JSON on MQTT, fragmented CDR on XRCE).
+4. **Vision (publish-only push):** `camera` → `CompressedImage` (base64-in-JSON on MQTT by default, `use_b64: false` for raw JPEG bytes; fragmented CDR on XRCE).
 5. **Link health:** `status_sensor` binary_sensor mirrors middleware `connected()`.
 
 ### Message types and entity bindings
@@ -120,9 +120,10 @@ ros2:
     - topic: /camera/image/compressed
       type: sensor_msgs/CompressedImage
       source: {camera: {id: sense_camera}}
+      # use_b64: false  # raw JPEG bytes on MQTT (default true = base64-in-JSON)
 ```
 
-Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and all publish-only types as subscriptions (`Joy`, `Range`, `BatteryState`, `Imu`) are rejected at validation, not silently dropped. `frame_id:` is rejected on headerless types; `radiation_type:`/`field_of_view:`/`min_range:`/`max_range:`/`variance:` only with `Range`; `min_voltage:`/`max_voltage:`/`design_capacity:`/`technology:`/`location:` only with `BatteryState` (with `min ≤ max` cross-checks). `sensor_msgs/Imu` needs an `imu:` source with all six `accel_x/y/z` + `gyro_x/y/z` sensor refs; `orientation_x/y/z/w` must be all present or all absent.
+Validation: exactly one of `target:`/`targets:` and `source:`/`sources:`; multi-joint types require plural, all others singular. `Int32`/`String` and all publish-only types as subscriptions (`Joy`, `Range`, `BatteryState`, `Imu`) are rejected at validation, not silently dropped. `frame_id:` is rejected on headerless types; `use_b64:` only with `CompressedImage` (default `true`); `radiation_type:`/`field_of_view:`/`min_range:`/`max_range:`/`variance:` only with `Range`; `min_voltage:`/`max_voltage:`/`design_capacity:`/`technology:`/`location:` only with `BatteryState` (with `min ≤ max` cross-checks). `sensor_msgs/Imu` needs an `imu:` source with all six `accel_x/y/z` + `gyro_x/y/z` sensor refs; `orientation_x/y/z/w` must be all present or all absent.
 
 ### Time sync, stamps, and frames
 
