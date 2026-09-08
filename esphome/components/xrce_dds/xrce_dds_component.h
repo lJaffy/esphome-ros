@@ -30,6 +30,10 @@ constexpr uint16_t XRCE_STREAM_HISTORY = 4;
 // One history slot: samples larger than this (e.g. Odometry with zeroed
 // covariances) go out via the fragmented write path instead.
 constexpr size_t XRCE_STREAM_BLOCK = XRCE_STREAM_BUF_SIZE / XRCE_STREAM_HISTORY;
+// Image stream: one JPEG (~21 kB observed, larger with bright scenes)
+// must fit across the 4 history slots without mid-frame ACKs, since the
+// flush callback only pumps with timeout 0. 64 kB holds ~63 kB frames.
+constexpr size_t XRCE_IMG_BUF_SIZE = 65536;
 constexpr size_t XRCE_TOPIC_NAME_LEN = 96;
 constexpr size_t XRCE_XML_BUF_LEN = 384;
 
@@ -132,6 +136,9 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uint32_t next_attempt_{0};
   uint32_t last_pump_{0};
   uint32_t last_rx_{0};
+  // Last time the session reported fully-confirmed output. Separate from
+  // last_rx_ (inbound data) so publish-only nodes still see agent ACKs.
+  uint32_t last_confirm_{0};
 
   uxrSession session_{};
   uxrCustomTransport custom_{};
@@ -165,7 +172,7 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> in_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_be_buf_{};
-  std::array<uint8_t, UXR_CONFIG_CUSTOM_TRANSPORT_MTU> img_buf_{};
+  std::array<uint8_t, XRCE_IMG_BUF_SIZE> img_buf_{};
   // Single-threaded main loop: one shared scratch sample, no per-message heap.
   uint8_t sample_buf_[sizeof(ros2::JointTrajectoryMsg)]{0};
   // Cumulative transport counters (never reset; integrity signal for HIL).

@@ -145,11 +145,17 @@ void XrceDdsComponent::loop() {
   if (now - this->last_pump_ < this->process_interval_ms_)
     return;
   this->last_pump_ = now;
+  // uxr_run_session_timeout(0) reports output confirmation, not transport
+  // health: a just-queued image reads "unconfirmed" until agent ACKs
+  // arrive. Only drop after a full keepalive window without confirmation.
   // KNOWN GAP: run health only catches transport errors. A silently dead
   // UDP agent (blackhole, no ICMP) looks healthy until traffic fails.
   // HIL follow-up: periodic time-sync ping when now - last_rx_ is large.
-  if (!this->pump_once())
+  if (this->pump_once()) {
+    this->last_confirm_ = now;
+  } else if (now - this->last_confirm_ > this->keepalive_timeout_ms_) {
     this->drop_link_();
+  }
 }
 
 void XrceDdsComponent::dump_config() {
@@ -220,6 +226,7 @@ bool XrceDdsComponent::try_connect_() {
   this->link_ = LinkState::LINK_UP;
   this->last_rx_ = now;
   this->last_pump_ = now;
+  this->last_confirm_ = now;
   ESP_LOGI(TAG, "Connected to agent at %s:%u", this->agent_address_.c_str(), this->agent_port_);
   return true;
 }
@@ -644,6 +651,12 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
       !ucdr_serialize_array_uint8_t(&ub, jpeg, len) || ub.error) {
     ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
     this->tx_fail_++;
+    // Discard the poisoned partial frame so the next publish starts from
+    // a clean history; otherwise unacked fragments pin the stream and
+    // every later pump reads "unconfirmed".
+    if (uxrOutputReliableStream *s =
+            uxr_get_output_reliable_stream(&this->session_.streams, this->img_stream_.index))
+      uxr_reset_output_reliable_stream(s);
     return false;
   }
   this->tx_ok_++;
