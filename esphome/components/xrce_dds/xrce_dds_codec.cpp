@@ -10,7 +10,8 @@ namespace xrce_dds {
 namespace {
 
 uint32_t str_size(uint32_t size, const char *s) {
-  return (uint32_t) (ucdr_alignment(size, 4) + 4 + strlen(s) + 1);
+  size += (uint32_t) (ucdr_alignment(size, 4) + 4 + strlen(s) + 1);
+  return size;
 }
 
 bool ser_header(ucdrBuffer *ub, const ros2::HeaderMsg *h) {
