@@ -9,6 +9,15 @@
 
 #include "../ros2/ros2_types.h"
 
+// Internal vendored stream helpers (defs linked via xrce_dds_vendor.c).
+// Forward-declared here so the public amalgamated header stays untouched.
+// File scope: linkage specifications are not permitted inside function bodies.
+extern "C" {
+struct uxrOutputReliableStream *uxr_get_output_reliable_stream(struct uxrStreamStorage *,
+                                                               uint8_t);
+void uxr_reset_output_reliable_stream(struct uxrOutputReliableStream *);
+}
+
 namespace esphome {
 namespace xrce_dds {
 
@@ -128,13 +137,6 @@ bool XrceDdsComponent::pump_timed_(int timeout_ms) {
 void XrceDdsComponent::reset_img_stream_() {
   // Light recovery for a poisoned fragmented image frame: reset only the
   // image reliable stream history, preserving participant/writers/socket.
-  // Internal API (defs linked via xrce_dds_vendor.c); forward-declared here
-  // so the public amalgamated header stays untouched.
-  extern "C" {
-  struct uxrOutputReliableStream *uxr_get_output_reliable_stream(struct uxrStreamStorage *,
-                                                                 uint8_t);
-  void uxr_reset_output_reliable_stream(struct uxrOutputReliableStream *);
-  }
   auto *s = uxr_get_output_reliable_stream(&this->session_.streams, this->img_stream_.index);
   if (s != nullptr)
     uxr_reset_output_reliable_stream(s);
