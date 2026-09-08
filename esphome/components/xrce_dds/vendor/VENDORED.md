@@ -68,6 +68,13 @@ never hand-edit the generated files). Rules: quoted/uxr/ucdr includes
 resolving inside `vendor/` are inlined once with `BEGIN/END` markers
 (public headers → `.h`, bodies + src-internal headers → `.c`); anything
 else (system headers, platform-guarded transports) is kept verbatim.
+Two named exceptions, both explicit in `amalgamate.py`: `DROP_BASENAMES`
+(`shared_memory_internal.h` — included unconditionally but zero
+references, profile off; kept verbatim it would not resolve from the
+component root) is dropped with a comment, `KEEP_BASENAMES`
+(`FreeRTOS.h`, `semphr.h`, `task.h` — guarded platform headers provided
+by IDF when their guards are true) is kept; any other unvendored include
+fails the script loudly so new upstream headers get a conscious decision.
 
 Bump `UXR_CLIENT_VERSION_*` / `MICROCDR_VERSION_*` in the baked headers
 when moving to a new upstream tag, and re-copy `LICENSE` files.

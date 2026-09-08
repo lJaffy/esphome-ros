@@ -38,6 +38,7 @@ Regenerate: `python3 vendor/amalgamate.py` from esphome/components/xrce_dds/
 The result must be byte-identical to the committed files
 (tests/test_xrce_vendor.py checks this).
 """
+import os
 import re
 import sys
 from pathlib import Path
@@ -98,6 +99,26 @@ def is_public(path):
     return "include" in parts
 
 
+# Quoted includes (by basename) that resolve inside vendor/ but were not
+# vendored, and how to handle them. A kept line survives verbatim; this is
+# only correct when the platform (ESP-IDF) or a false `#ifdef` provides it.
+# A dropped line is proven dead. Anything else is a loud SystemExit so new
+# upstream headers get a conscious decision instead of a broken build.
+# - shared_memory_internal.h: DROPPED. Included unconditionally by
+#   session.c/create_entities_{bin,xml}.c, but zero symbols from it are
+#   referenced anywhere in the tree and UCLIENT_PROFILE_SHARED_MEMORY is
+#   off in the baked config. (Kept verbatim it would break the build: the
+#   amalgam lives at the component root where the relative path dies.)
+# - FreeRTOS.h, semphr.h, task.h: KEPT. Guarded platform headers
+#   (multithread.h: PLATFORM_NAME_FREERTOS, time.c: FREERTOS_PLUS_TCP),
+#   both guards false in our config; IDF would provide them if true.
+# Basename keying: these names are distinctive upstream; if upstream ever
+# reuses one for a real vendored header, the freshness test still pins the
+# exact output and the build will tell us.
+DROP_BASENAMES = {"shared_memory_internal.h"}
+KEEP_BASENAMES = {"FreeRTOS.h", "semphr.h", "task.h"}
+
+
 class Amalgam:
     def __init__(self):
         self.seen = set()
@@ -145,6 +166,19 @@ class Amalgam:
                         else:
                             self.emit_body(target)
                         continue
+                    if VENDOR.resolve() in target.parents:
+                        # Resolves inside vendor/ but was not vendored:
+                        # drop proven-dead, keep platform-guarded, else
+                        # fail loudly (see DROP/KEEP_BASENAMES above).
+                        base = os.path.basename(os.fspath(target))
+                        if base in DROP_BASENAMES:
+                            buf.append("/* dropped (not vendored, zero references): %s */\n" % base)
+                            continue
+                        if base in KEEP_BASENAMES:
+                            buf.append(line)
+                            continue
+                        raise SystemExit("unvendored include, update DROP/KEEP_BASENAMES or vendor it: %s (from %s)"
+                                         % (inc.group(1), self.rel(path)))
                     buf.append(line)
                 elif ang is not None:
                     target = map_angle(ang.group(1))

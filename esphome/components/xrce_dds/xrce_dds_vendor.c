@@ -2695,7 +2695,7 @@ static inline int64_t uxr_convert_to_nanos(
 
 #endif // SRC_C_UTIL_TIME_H_
 /* === END microxrcedds/src/c/util/time_internal.h === */
-#include "../../profile/shared_memory/shared_memory_internal.h"
+/* dropped (not vendored, zero references): shared_memory_internal.h */
 
 #ifdef UCLIENT_PROFILE_SHARED_MEMORY
 #define PROFILE_SHARED_MEMORY_ADD_SIZE 21
@@ -7364,7 +7364,7 @@ inline uint16_t create_entity_ref(
 /* === END microxrcedds/src/c/core/session/create_entities_ref.c === */
 /* === BEGIN microxrcedds/src/c/core/session/create_entities_xml.c === */
 
-#include "../../profile/shared_memory/shared_memory_internal.h"
+/* dropped (not vendored, zero references): shared_memory_internal.h */
 
 #include <string.h>
 
@@ -7541,7 +7541,7 @@ inline uint16_t create_entity_xml(
 /* === BEGIN microxrcedds/src/c/core/session/create_entities_bin.c === */
 
 
-#include "../../profile/shared_memory/shared_memory_internal.h"
+/* dropped (not vendored, zero references): shared_memory_internal.h */
 
 #include <string.h>
 
@@ -8170,7 +8170,7 @@ void read_format_packed_samples(
 /* === END microxrcedds/src/c/core/session/read_access.c === */
 /* === BEGIN microxrcedds/src/c/core/session/write_access.c === */
 
-#include "../../profile/shared_memory/shared_memory_internal.h"
+/* dropped (not vendored, zero references): shared_memory_internal.h */
 
 #define WRITE_DATA_PAYLOAD_SIZE 4
 #define MAX_WRITE_DATA_PAYLOAD_SIZE 65535

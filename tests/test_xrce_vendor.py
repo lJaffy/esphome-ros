@@ -7,6 +7,8 @@ amalgamation (xrce_dds_vendor.{h,c}, built by vendor/amalgamate.py), which
 needs no extra include dirs and compiles from the component root.
 """
 import importlib.util
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -190,9 +192,40 @@ def test_amalgam_covers_all_sources():
               "microxrcedds/include/uxr/client/config.h",
               "microcdr/include/ucdr/config.h"):
         assert header.count("/* === BEGIN %s === */" % h) == 1, h
-    # No project include may survive unresolved: only the umbrella and
-    # system headers remain.
+    # Every surviving include must resolve under the generator's contract:
+    # the umbrella, system/platform headers, or a quoted/uxr/ucdr include
+    # whose target was NOT vendored (guarded platform headers, or the
+    # proven-dead DROP set). Anything resolving to a vendored file would
+    # mean the inliner missed it.
+    begin_re = re.compile(r"^/\* === BEGIN (\S+) === \*/$")
+    quoted_re = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
+    angle_re = re.compile(r"^\s*#\s*include\s*<([^>]+)>")
+    current = None
     for line in body.splitlines():
         s = line.strip()
-        if s.startswith("#include"):
-            assert s == '#include "xrce_dds_vendor.h"' or s.startswith("#include <"), s
+        m = begin_re.match(s)
+        if m:
+            current = VENDOR / m.group(1)
+            continue
+        q = quoted_re.match(s)
+        a = angle_re.match(s) if q is None else None
+        if q is not None:
+            name = q.group(1)
+            if name == "xrce_dds_vendor.h":
+                continue
+            assert current is not None, s
+            target = os.path.normpath(os.path.join(str(current.parent), name))
+            assert not (target.startswith(str(VENDOR) + os.sep)
+                        and Path(target).is_file()), \
+                "vendored file not inlined: %s (from %s)" % (s, current)
+        elif a is not None:
+            name = a.group(1)
+            for prefix, root in (("uxr/", UXR_INC.parent.parent),
+                                 ("ucdr/", UCDR_INC.parent.parent)):
+                if name.startswith(prefix):
+                    assert not (root / name).is_file(), \
+                        "vendored header not inlined: %s" % s
+    # The proven-dead shared_memory include must be dropped, never kept:
+    # no #include may reference it, and the drop comment records why.
+    assert not re.search(r'#\s*include[^"\n]*shared_memory', body)
+    assert "dropped (not vendored, zero references): shared_memory_internal.h" in body
