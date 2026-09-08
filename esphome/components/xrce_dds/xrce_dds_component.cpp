@@ -600,24 +600,8 @@ size_t XrceDdsComponent::count_topics_() {
     add(this->readers_[i].topic);
   for (size_t i = 0; i < this->num_writers_; i++)
     add(this->writers_[i].topic);
-  for (size_t i = 0; i < this->num_requesters_; i++) {
-    char req[XRCE_TOPIC_NAME_LEN];
-    snprintf(req, sizeof(req), "rq%s", this->requesters_[i].service.c_str());
-    std::string rqs = req;
-    for (size_t j = 0; j < n; j++)
-      if (*seen[j] == rqs)
-        goto skip_rq;
-    seen[n++] = &this->requesters_[i].service;
-  skip_rq:;
-    char rep[XRCE_TOPIC_NAME_LEN];
-    snprintf(rep, sizeof(rep), "rr%s", this->requesters_[i].service.c_str());
-    std::string rps = rep;
-    for (size_t j = 0; j < n; j++)
-      if (*seen[j] == rps)
-        goto skip_rr;
-    seen[n++] = &this->requesters_[i].service;
-  skip_rr:;
-  }
+  for (size_t i = 0; i < this->num_requesters_; i++)
+    n += 2;  // rq + rr topic pair per service client (shared max_topics budget)
   return n;
 }
 
@@ -869,11 +853,10 @@ bool XrceDdsComponent::call_service_on_worker_(const char *service, uint32_t tim
     return false;
   if (!e->created)
     return false;
-  ucdrBuffer ub;
-  if (uxr_prepare_output_stream(&this->session_, this->out_stream_, e->requester_id, &ub, 0) ==
-      UXR_INVALID_REQUEST_ID)
-    return false;
-  uint16_t seq = uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
+  // uxr_buffer_request prepares its own stream internally; Trigger
+  // requests are empty (0 bytes).
+  uint8_t dummy = 0;
+  uint16_t seq = uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, &dummy, 0);
   if (seq == UXR_INVALID_REQUEST_ID)
     return false;
   e->pending = true;

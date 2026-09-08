@@ -1,0 +1,44 @@
+esphome:
+  name: trigger-service
+  friendly_name: Trigger Service
+
+esp32:
+  board: esp32-s3-devkitc-1
+
+logger:
+
+api:
+
+wifi:
+  ssid: wifi
+  password: wifi_password
+
+external_components:
+  - source:
+      type: local
+      path: ../esphome/components/
+
+switch:
+  - platform: gpio
+    id: trig_sw
+    name: Trigger Switch
+    pin: GPIO4
+
+xrce_dds:
+  agent_address: 192.168.1.10
+  agent_port: 8888
+  transport:
+    type: udp
+  domain_id: 0
+  client_name: trigger-client
+
+ros2:
+  middleware: xrce_dds
+  services:
+    - service: /toggle_led
+      type: std_srvs/Trigger
+      trigger: {switch: {id: trig_sw}}
+      timeout: 5s
+
+# Agent: MicroXRCEAgent udp4 -p 8888
+# Verify: ros2 service list | grep toggle_led
