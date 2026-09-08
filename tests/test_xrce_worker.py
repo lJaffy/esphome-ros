@@ -75,9 +75,31 @@ def test_mailbox_overwrite_counter():
 
 
 def test_mailbox_staged_off_stack():
-    # A 48 kB item must not live on the loop task stack.
+    # A 48 kB item must not live on the loop task stack nor in DRAM .bss:
+    # heap staging + heap queue storage, PSRAM-preferred.
     assert "img_stage_" in XH
-    assert "ImageItem &img = this->img_stage_" in XCPP
+    assert "ImageItem *img_stage_" in XH
+    assert "ImageItem &img = *this->img_stage_" in XCPP
+    assert "uint8_t *img_box_storage_" in XH
+    assert "uint8_t *img_buf_" in XH
+    assert "ExternalRAMAllocator" in XCPP
+    assert "images_available_" in XH
+    assert "images_available_" in XCPP
+    assert "free_image_buffers_" in XH
+    assert "free_image_buffers_" in XCPP
+
+
+def test_camera_gated_mailbox_size():
+    # Non-camera boards get a token-sized mailbox (no frames possible).
+    assert "USE_CAMERA" in XH
+    assert "XRCE_IMG_MAILBOX_MAX = 64" in XH
+
+
+def test_no_large_static_buffers():
+    # Nothing image-sized may remain as a static member array.
+    assert "img_box_storage_[" not in XH
+    assert "img_buf_{}" not in XH
+    assert "ImageItem img_stage_" not in XH
 
 
 def test_atomic_link_and_counters():
