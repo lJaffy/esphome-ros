@@ -21,7 +21,7 @@ Outputs (written next to the component, i.e. `..`):
                        they use, in upstream `SRCS` order. Compiled as C.
 
 Rules (keep in sync with the freshness test):
-  - `#include "..."` resolving inside vendor/ is inlined once (dedupe by
+  - `#include "..."` resolving inside vendor/ is inlined (dedupe by
     resolved absolute path); markers `/* === BEGIN <rel> === */` /
     `/* === END <rel> === */` bracket each inlined file.
   - `#include <uxr/...>` / `#include <ucdr/...>` resolving inside vendor/
@@ -30,8 +30,21 @@ Rules (keep in sync with the freshness test):
   - Any other `#include` (system headers, platform-guarded transports we
     did not vendor) is kept verbatim; those sit inside false `#ifdef`s
     under our baked config, exactly as upstream.
-  - All preprocessor conditionals are kept verbatim; text is only
-    relocated, never rewritten, so guarded semantics are unchanged.
+  - Placement is activity-aware (see below): a header first met inside
+    dead (`#ifdef`-off) code is emitted again at its first live use, so
+    every declaration also exists in live code. Include guards make the
+    duplicate emission safe. All conditionals are kept verbatim; text is
+    only relocated, never rewritten.
+
+Activity model: a region is live iff the preprocessor would keep it in a
+C TU built with the baked config. TRUE_DEFS holds the baked profiles;
+`__cplusplus` counts as UNDEFINED (C-mode common denominator — vendor.h
+serves C and C++ TUs, and no used declaration hides behind `#ifdef
+__cplusplus` except `extern "C"` braces). Unknown/complex expressions
+are assumed live; that can only add a harmless guard-deduped copy,
+while the reverse (missing a live copy) would break the build.
+`#define`s met in live code are learned, mirroring the output TU, so
+`#ifdef`s on config-provided macros evaluate correctly.
 
 Regenerate: `python3 vendor/amalgamate.py` from esphome/components/xrce_dds/
 (or `python3 esphome/components/xrce_dds/vendor/amalgamate.py` from root).
@@ -50,6 +63,19 @@ UXR_INC = VENDOR / "microxrcedds" / "include"
 
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s*"([^"]+)"')
 ANGLE_RE = re.compile(r"^\s*#\s*include\s*<([^>]+)>")
+COND_RE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b\s*(.*)$")
+DEFINE_RE = re.compile(r"^\s*#\s*define\s+(\w+)")
+UNDEF_RE = re.compile(r"^\s*#\s*undef\s+(\w+)")
+DEFINED_RE = re.compile(r"defined\((\w+)\)")
+IDENT_RE = re.compile(r"\w+")
+
+# Baked profiles from vendor/*/include/*/config.h. Everything else
+# UCLIENT_*/PLATFORM_*/WIN32/PERFORMANCE_TESTING counts as undefined.
+TRUE_DEFS = frozenset({
+    "UCLIENT_PROFILE_CUSTOM_TRANSPORT",
+    "UCLIENT_PROFILE_STREAM_FRAMING",
+    "UCLIENT_TWEAK_XRCE_WRITE_LIMIT",
+})
 
 # Upstream CMake SRCS order (Micro-XRCE-DDS-Client) + micro-CDR first.
 SOURCES = [
@@ -63,6 +89,7 @@ SOURCES = [
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "output_best_effort_stream.c",
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "output_reliable_stream.c",
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "stream_storage.c",
+    VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "stream_id.c",
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "stream_id.c",
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "stream" / "seq_num.c",
     VENDOR / "microxrcedds" / "src" / "c" / "core" / "session" / "session.c",
@@ -121,106 +148,162 @@ KEEP_BASENAMES = {"FreeRTOS.h", "semphr.h", "task.h"}
 
 class Amalgam:
     def __init__(self):
-        self.seen = set()
+        self.state = {}  # resolved path -> "live" | "dead"
+        self.known = set(TRUE_DEFS)
         self.h = []
         self.c = []
 
     def rel(self, path):
         return path.relative_to(VENDOR).as_posix()
 
-    def emit_header(self, path):
+    def eval_cond(self, expr):
+        """C-mode defined-ness; unknown/complex reads as live (safe side)."""
+        expr = expr.strip()
+        if expr.startswith("defined(") and expr.endswith(")"):
+            return expr[8:-1].strip() in self.known
+        if expr.startswith("!defined(") and expr.endswith(")"):
+            return expr[9:-1].strip() not in self.known
+        if IDENT_RE.fullmatch(expr):
+            return expr in self.known
+        return True
+
+    def emit_header(self, path, live):
         key = path.resolve()
-        if key in self.seen:
+        prev = self.state.get(key)
+        if prev == "live" or (prev == "dead" and not live):
             return
-        self.seen.add(key)
+        # Live re-emission after a dead one: include guards make the
+        # duplicate safe, and only the live copy's declarations count.
+        self.state[key] = "live" if live else "dead"
         self.h.append("/* === BEGIN %s === */\n" % self.rel(path))
-        self._run_lines(path, self.h)
+        self._scan(path, live, self.h)
         self.h.append("/* === END %s === */\n" % self.rel(path))
 
-    def emit_body(self, path):
+    def emit_body(self, path, live):
         key = path.resolve()
-        if key in self.seen:
-            return
-        self.seen.add(key)
-        is_c = path.suffix == ".c"
-        if not is_c:
-            # src-internal header reached from a body: inline here.
-            self.c.append("/* === BEGIN %s === */\n" % self.rel(path))
-            self._run_lines(path, self.c)
-            self.c.append("/* === END %s === */\n" % self.rel(path))
-            return
+        prev = self.state.get(key)
+        if prev is not None:
+            if not live or prev == "live":
+                return
+            # fallthrough: live re-emission of a dead-marked internal header
+            self.state[key] = "live"
+        else:
+            self.state[key] = "live" if live else "dead"
         self.c.append("/* === BEGIN %s === */\n" % self.rel(path))
-        self._run_lines(path, self.c)
+        self._scan(path, live, self.c)
         self.c.append("/* === END %s === */\n" % self.rel(path))
 
-    def _run_lines(self, path, buf):
+    def discover(self, path):
+        """Pass 1: emit headers reachable from path (never the body)."""
+        self._scan(path, True, None)
+
+    def _scan(self, path, entry_live, buf):
         with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                inc = INCLUDE_RE.match(line)
-                ang = ANGLE_RE.match(line) if inc is None else None
-                if inc is not None:
-                    target = (path.parent / inc.group(1)).resolve()
-                    if target.is_file() and VENDOR.resolve() in target.parents:
-                        if is_public(target):
-                            self.emit_header(target)
-                        else:
-                            self.emit_body(target)
-                        continue
-                    if VENDOR.resolve() in target.parents:
-                        # Resolves inside vendor/ but was not vendored:
-                        # drop proven-dead, keep platform-guarded, else
-                        # fail loudly (see DROP/KEEP_BASENAMES above).
-                        base = os.path.basename(os.fspath(target))
-                        if base in DROP_BASENAMES:
+            lines = f.readlines()
+        live_stack = [entry_live]
+        taken_stack = [entry_live]
+        for line in lines:
+            cond = COND_RE.match(line)
+            if cond is not None:
+                kind, expr = cond.group(1), cond.group(2)
+                if kind in ("if", "ifdef", "ifndef"):
+                    m = re.match(r"\s*(\w+)", expr)
+                    name = m.group(1) if m else ""
+                    if kind == "ifdef":
+                        val = name in self.known
+                    elif kind == "ifndef":
+                        val = name not in self.known
+                    else:
+                        val = self.eval_cond(expr)
+                    active = live_stack[-1] and val
+                    live_stack.append(active)
+                    taken_stack.append(active)
+                elif kind in ("elif", "else"):
+                    parent = live_stack[-2]
+                    if kind == "else":
+                        val = True
+                    else:
+                        val = self.eval_cond(expr)
+                    active = parent and not taken_stack[-1] and val
+                    live_stack[-1] = active
+                    taken_stack[-1] = taken_stack[-1] or active
+                else:  # endif
+                    live_stack.pop()
+                    taken_stack.pop()
+                if buf is not None:
+                    buf.append(line)
+                continue
+            live = live_stack[-1]
+            dm = DEFINE_RE.match(line)
+            if dm is not None:
+                if live:
+                    self.known.add(dm.group(1))
+                if buf is not None:
+                    buf.append(line)
+                continue
+            um = UNDEF_RE.match(line)
+            if um is not None:
+                if live:
+                    self.known.discard(um.group(1))
+                if buf is not None:
+                    buf.append(line)
+                continue
+            inc = INCLUDE_RE.match(line)
+            ang = ANGLE_RE.match(line) if inc is None else None
+            if inc is not None:
+                target = (path.parent / inc.group(1)).resolve()
+                if target.is_file() and VENDOR.resolve() in target.parents:
+                    if is_public(target):
+                        self.emit_header(target, live)
+                    else:
+                        self.emit_body(target, live)
+                    continue
+                if VENDOR.resolve() in target.parents:
+                    # Resolves inside vendor/ but was not vendored:
+                    # drop proven-dead, keep platform-guarded, else
+                    # fail loudly (see DROP/KEEP_BASENAMES above).
+                    base = os.path.basename(os.fspath(target))
+                    if base in DROP_BASENAMES:
+                        if buf is not None:
                             buf.append("/* dropped (not vendored, zero references): %s */\n" % base)
-                            continue
-                        if base in KEEP_BASENAMES:
-                            buf.append(line)
-                            continue
-                        raise SystemExit("unvendored include, update DROP/KEEP_BASENAMES or vendor it: %s (from %s)"
-                                         % (inc.group(1), self.rel(path)))
-                    buf.append(line)
-                elif ang is not None:
-                    target = map_angle(ang.group(1))
-                    if target is not None and target.is_file():
-                        self.emit_header(target)
                         continue
+                    if base in KEEP_BASENAMES:
+                        if buf is not None:
+                            buf.append(line)
+                        continue
+                    raise SystemExit("unvendored include, update DROP/KEEP_BASENAMES or vendor it: %s (from %s)"
+                                     % (inc.group(1), self.rel(path)))
+                if buf is not None:
                     buf.append(line)
-                else:
+            elif ang is not None:
+                target = map_angle(ang.group(1))
+                if target is not None and target.is_file():
+                    self.emit_header(target, live)
+                    continue
+                if buf is not None:
                     buf.append(line)
+            elif buf is not None:
+                buf.append(line)
 
 
 def build():
     missing = [str(p) for p in SOURCES if not p.is_file()]
     if missing:
         raise SystemExit("missing vendored sources: %s" % missing)
+    # Deduplicate SOURCES defensively: one entry per file, order kept.
+    srcs = list(dict.fromkeys(SOURCES))
     am = Amalgam()
     # Seed with the umbrella headers so the amalgam is a complete
     # client.h/microcdr.h equivalent even for public headers no .c
     # includes directly (e.g. client.h itself is include-only).
-    am.emit_header(UCR_INC / "ucdr" / "microcdr.h")
-    am.emit_header(UXR_INC / "uxr" / "client" / "client.h")
-    # Pass 1: every public header reachable from the sources, depth-first.
-    for src in SOURCES:
-        with open(src, "r", encoding="utf-8") as f:
-            text = f.read()
-        for line in text.splitlines(keepends=True):
-            inc = INCLUDE_RE.match(line)
-            ang = ANGLE_RE.match(line) if inc is None else None
-            target = None
-            if inc is not None:
-                cand = (src.parent / inc.group(1)).resolve()
-                if cand.is_file() and VENDOR.resolve() in cand.parents and is_public(cand):
-                    target = cand
-            elif ang is not None:
-                cand = map_angle(ang.group(1))
-                if cand is not None and cand.is_file():
-                    target = cand
-            if target is not None:
-                am.emit_header(target)
+    am.emit_header(UCR_INC / "ucdr" / "microcdr.h", True)
+    am.emit_header(UXR_INC / "uxr" / "client" / "client.h", True)
+    # Pass 1: headers reachable from the sources (bodies never emitted).
+    for src in srcs:
+        am.discover(src)
     # Pass 2: bodies + src-internal headers in upstream order.
-    for src in SOURCES:
-        am.emit_body(src)
+    for src in srcs:
+        am.emit_body(src, True)
 
     banner_h = (
         "/* Amalgamated XRCE-DDS headers. Generated by vendor/amalgamate.py;\n"

@@ -64,10 +64,16 @@ python3 vendor/amalgamate.py   # from esphome/components/xrce_dds/
 This rewrites `../xrce_dds_vendor.h` + `../xrce_dds_vendor.c`
 byte-deterministically from the tree below
 (`tests/test_xrce_vendor.py::test_amalgamation_fresh` enforces it —
-never hand-edit the generated files). Rules: quoted/uxr/ucdr includes
-resolving inside `vendor/` are inlined once with `BEGIN/END` markers
-(public headers → `.h`, bodies + src-internal headers → `.c`); anything
-else (system headers, platform-guarded transports) is kept verbatim.
+  never hand-edit the generated files). Rules: quoted/uxr/ucdr includes
+  resolving inside `vendor/` are inlined once with `BEGIN/END` markers
+  (public headers → `.h`, bodies + src-internal headers → `.c`); anything
+  else (system headers, platform-guarded transports) is kept verbatim.
+  Placement is activity-aware: the scanner evaluates `#ifdef`s against the
+  baked config, and a header first met inside dead (`#ifdef`-off) code is
+  emitted again at its first live use — otherwise its declarations would
+  exist only in skipped code (this bit us with `stream_id.h`, reached only
+  via the disabled multithreading profile). Include guards make the
+  duplicate emission safe.
 Two named exceptions, both explicit in `amalgamate.py`: `DROP_BASENAMES`
 (`shared_memory_internal.h` — included unconditionally but zero
 references, profile off; kept verbatim it would not resolve from the
