@@ -1,10 +1,16 @@
 """Vendored XRCE-DDS tree checks (stdlib-only: no esphome install needed).
 
-Guards the add-on build: external_components never inits submodules, so
-esphome/components/xrce_dds/vendor/ must stay self-contained (baked
-config.h, no int main, no platform transports).
+Guards the add-on build: external_components never inits submodules, and
+ESPHome's ESP-IDF writer neither copies subdirectories into the build nor
+forwards -I flags to CMake. The C sources therefore ship as the committed
+amalgamation (xrce_dds_vendor.{h,c}, built by vendor/amalgamate.py), which
+needs no extra include dirs and compiles from the component root.
 """
+import importlib.util
+import sys
 from pathlib import Path
+
+import pytest
 
 REPO = Path(__file__).parent.parent
 COMP = REPO / "esphome" / "components" / "xrce_dds"
@@ -135,8 +141,58 @@ def test_top_level_headers_and_licenses():
 
 
 def test_init_points_at_vendor():
+    # No -I flags: the IDF writer drops them (only -D/-W are forwarded),
+    # so the amalgamation must be include-dir free.
     text = (COMP / "__init__.py").read_text()
-    assert "vendor" in text
-    assert "microxrcedds" in text and "microcdr" in text
+    assert "add_build_flag" not in text
+    assert "microxrcedds" not in text and "microcdr" not in text
     assert "Micro-XRCE-DDS-Client" not in text
     assert "micro-CDR" not in text
+
+
+def test_our_code_uses_amalgam():
+    for name in ("xrce_dds_codec.h", "xrce_dds_component.h"):
+        text = (COMP / name).read_text()
+        assert '#include "xrce_dds_vendor.h"' in text, name
+        assert "<ucdr/" not in text and "<uxr/" not in text, name
+
+
+def _load_amalgamator():
+    path = VENDOR / "amalgamate.py"
+    spec = importlib.util.spec_from_file_location("amalgamate_under_test", path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["amalgamate_under_test"] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_amalgamation_fresh():
+    # The committed xrce_dds_vendor.{h,c} must be byte-identical to what
+    # vendor/amalgamate.py produces from vendor/ (no hand-edits, no drift
+    # from the perl-generated original).
+    am = _load_amalgamator()
+    header, body = am.build()
+    assert (COMP / "xrce_dds_vendor.h").read_text(encoding="utf-8") == header
+    assert (COMP / "xrce_dds_vendor.c").read_text(encoding="utf-8") == body
+
+
+def test_amalgam_covers_all_sources():
+    body = (COMP / "xrce_dds_vendor.c").read_text(encoding="utf-8")
+    for rel in EXPECTED_C:
+        assert ("/* === BEGIN %s" % rel) in body, rel
+    # Every vendored public header is inlined exactly once into the .h.
+    header = (COMP / "xrce_dds_vendor.h").read_text(encoding="utf-8")
+    assert header.startswith("/* Amalgamated XRCE-DDS headers.")
+    assert body.startswith("/* Amalgamated XRCE-DDS sources.")
+    assert '#include "xrce_dds_vendor.h"' in body
+    for h in ("microcdr/include/ucdr/microcdr.h",
+              "microxrcedds/include/uxr/client/client.h",
+              "microxrcedds/include/uxr/client/config.h",
+              "microcdr/include/ucdr/config.h"):
+        assert header.count("/* === BEGIN %s === */" % h) == 1, h
+    # No project include may survive unresolved: only the umbrella and
+    # system headers remain.
+    for line in body.splitlines():
+        s = line.strip()
+        if s.startswith("#include"):
+            assert s == '#include "xrce_dds_vendor.h"' or s.startswith("#include <"), s

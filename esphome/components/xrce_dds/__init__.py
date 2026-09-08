@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome.const import CONF_ID
@@ -77,9 +75,12 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    third_party = Path(__file__).parent / "vendor"
-    cg.add_build_flag(f"-I{third_party / 'microxrcedds' / 'include'}")
-    cg.add_build_flag(f"-I{third_party / 'microcdr' / 'include'}")
+    # NOTE: no -I build flags here on purpose. ESPHome's ESP-IDF writer
+    # only forwards -D/-W flags to CMake (get_project_compile_flags), so
+    # -I would be silently dropped, and only top-level component files are
+    # staged into the build (loader resources, no recursion). The XRCE-DDS
+    # C sources therefore ship as the amalgamated xrce_dds_vendor.{h,c}
+    # (see vendor/amalgamate.py), which needs no extra include dirs.
     cg.add(var.set_agent_address(config[CONF_AGENT_ADDRESS]))
     cg.add(var.set_agent_port(config[CONF_AGENT_PORT]))
     cg.add(var.set_domain_id(config[CONF_DOMAIN_ID]))

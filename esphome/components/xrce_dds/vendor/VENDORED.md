@@ -6,7 +6,7 @@ submodules, so the add-on build never sees
 (empty dirs → `ucdr/microcdr.h: No such file`). Even with submodules,
 the full upstream trees cannot compile under ESPHome:
 
-- ~30 `int main()` files under `examples/`/`test/` get glob-compiled into
+- ~30 `int main()` files under `examples/`/`test/` would all be glob-compiled into
   one component → duplicate-`main` link failure.
 - Two CMake-generated headers are absent (`ucdr/config.h`,
   `uxr/client/config.h` — only `.in` templates ship).
@@ -14,8 +14,23 @@ the full upstream trees cannot compile under ESPHome:
   absent on ESP-IDF) while this component only uses the custom transport.
 
 This `vendor/` tree is the minimal self-contained subset that builds.
-It is compiled automatically: ESPHome glob-compiles every `.c` under the
-component directory, and `__init__.py` adds the two `include/` dirs.
+
+## Why an amalgamation
+
+Two ESPHome ESP-IDF limits force the committed amalgamation
+(`../xrce_dds_vendor.{h,c}`) on top of this tree:
+
+- Only files directly in the component directory are staged into the
+  build (`loader.py::resources`, no recursion), so a deep `vendor/` tree
+  is never copied and its 30 `.c` files never compile.
+- Only `-D`/`-W` build flags reach CMake
+  (`framework_helpers.py::get_project_compile_flags`), so `-I` include
+  dirs are silently dropped.
+
+`xrce_dds_vendor.h` (all public headers inlined) +
+`xrce_dds_vendor.c` (all bodies + src-internal headers, compiled as C)
+need no extra include dirs and build from the component root on both
+ESP-IDF and Arduino. Our code includes only `"xrce_dds_vendor.h"`.
 
 ## Contents
 
@@ -43,13 +58,16 @@ platform transports (`ip_*.c`, `*_posix.c`, `*_windows.c`, …), `matching.c`,
 ## Regenerating
 
 ```bash
-U=esphome/components/xrce_dds/third_party/Micro-XRCE-DDS-Client
-C=esphome/components/xrce_dds/third_party/micro-CDR
-V=esphome/components/xrce_dds/vendor
-# headers + sources per the lists above, then re-bake the two config.h
-# files from (U|C)/include/*/config.h.in with the CMake defaults in
-# Micro-XRCE-DDS-Client/CMakeLists.txt and micro-CDR/CMakeLists.txt
+python3 vendor/amalgamate.py   # from esphome/components/xrce_dds/
 ```
+
+This rewrites `../xrce_dds_vendor.h` + `../xrce_dds_vendor.c`
+byte-deterministically from the tree below
+(`tests/test_xrce_vendor.py::test_amalgamation_fresh` enforces it —
+never hand-edit the generated files). Rules: quoted/uxr/ucdr includes
+resolving inside `vendor/` are inlined once with `BEGIN/END` markers
+(public headers → `.h`, bodies + src-internal headers → `.c`); anything
+else (system headers, platform-guarded transports) is kept verbatim.
 
 Bump `UXR_CLIENT_VERSION_*` / `MICROCDR_VERSION_*` in the baked headers
 when moving to a new upstream tag, and re-copy `LICENSE` files.

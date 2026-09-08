@@ -5,7 +5,7 @@
 #include <string>
 #include <utility>
 
-#include <uxr/client/client.h>
+#include "xrce_dds_vendor.h"
 
 #include "esphome/core/component.h"
 
