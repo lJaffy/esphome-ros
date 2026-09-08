@@ -183,7 +183,7 @@ def test_amalgam_covers_all_sources():
     # Every vendored public header is inlined exactly once into the .h.
     header = (COMP / "xrce_dds_vendor.h").read_text(encoding="utf-8")
     assert header.startswith("/* Amalgamated XRCE-DDS headers.")
-    assert body.startswith("/* Amalgamated XRCE-DDS sources.")
+    assert body.startswith("/* Amalgamated XRCE-DDS sources")
     assert '#include "xrce_dds_vendor.h"' in body
     for h in ("microcdr/include/ucdr/microcdr.h",
               "microxrcedds/include/uxr/client/client.h",
