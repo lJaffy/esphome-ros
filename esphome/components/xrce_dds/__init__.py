@@ -77,9 +77,9 @@ CONFIG_SCHEMA = cv.All(
 async def to_code(config: ConfigType) -> None:
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    third_party = Path(__file__).parent / "third_party"
-    cg.add_build_flag(f"-I{third_party / 'Micro-XRCE-DDS-Client' / 'include'}")
-    cg.add_build_flag(f"-I{third_party / 'micro-CDR' / 'include'}")
+    third_party = Path(__file__).parent / "vendor"
+    cg.add_build_flag(f"-I{third_party / 'microxrcedds' / 'include'}")
+    cg.add_build_flag(f"-I{third_party / 'microcdr' / 'include'}")
     cg.add(var.set_agent_address(config[CONF_AGENT_ADDRESS]))
     cg.add(var.set_agent_port(config[CONF_AGENT_PORT]))
     cg.add(var.set_domain_id(config[CONF_DOMAIN_ID]))

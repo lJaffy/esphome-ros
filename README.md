@@ -16,7 +16,7 @@ Three local custom components under `esphome/components/`:
 
 - `esphome>=2026.6.0` (`requirements.txt`)
 - `pytest>=8.0` for tests (`requirements_dev.txt`)
-- Submodules: `third_party/common_interfaces` (ROS 2 IDL ground truth), `esphome/components/xrce_dds/third_party/Micro-XRCE-DDS-Client`, `.../micro-CDR`
+- Submodule: `third_party/common_interfaces` (ROS 2 IDL ground truth). XRCE-DDS C libraries (Micro-XRCE-DDS-Client v3.0.2 + micro-CDR v2.0.2) are vendored under `esphome/components/xrce_dds/vendor/` — no submodule init needed for DDS builds.
 
 ```bash
 git submodule update --init --recursive
@@ -482,7 +482,7 @@ python -m pytest tests/
 ```text
 esphome/components/ros2/       # __init__.py, ros2_component.{h,cpp}, ros2_{types,json,middleware}.{h,cpp}
 esphome/components/ros2_mqtt/  # __init__.py, ros2_mqtt.{h,cpp}
-esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}
+esphome/components/xrce_dds/   # __init__.py, xrce_dds_{component,codec,transport_udp,transport_serial}.{h,cpp}, vendor/ (XRCE-DDS C libs, see vendor/VENDORED.md)
 examples/*.yaml                # 7 demos above
 tests/*.py                     # 3 pytest files
 third_party/common_interfaces  # submodule, canonical .msg

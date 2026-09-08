@@ -2,12 +2,12 @@
 
 ## Scope
 
-Work only in: `esphome/components/ros2/`, `esphome/components/ros2_mqtt/`, `esphome/components/xrce_dds/`, `examples/*.yaml`, `tests/*.py`.
+Work only in: `esphome/components/ros2/`, `esphome/components/ros2_mqtt/`, `esphome/components/xrce_dds/`, `examples/*.yaml`, `tests/*.py`, `tools/dds_capture/`.
 
 Do NOT touch, read for codegen, or document as source:
 
 - `scratch/` (ignored PoC), `examples/.esphome/`, `__pycache__/`, `*.pyc`, `.pytest_cache/`, `build*/`, `.venv/`, `venv/`, `dist/`
-- Submodule contents under `third_party/common_interfaces` and `esphome/components/xrce_dds/third_party/` (read-only vendored IDL / Micro-XRCE-DDS-Client / micro-CDR)
+- Submodule contents under `third_party/common_interfaces` (read-only vendored IDL)
 
 See root `.gitignore` + `examples/.gitignore` before adding files.
 
@@ -18,10 +18,11 @@ See root `.gitignore` + `examples/.gitignore` before adding files.
 - `ros2_types.{h,cpp}` — MCU structs + `TypeDef` table (`SUPPORTED_TYPES`); caps (`ROS2_MAX_*`, `ROS2_NAME_LEN=32`, `STRING_LEN=256`).
 - `ros2_json.{h,cpp}` — `JsonCodec` serialize/deserialize (MQTT wire format).
 - `ros2_middleware.{h,cpp}` — abstract `Ros2Middleware` + `MiddlewareRegistry` (max 4).
-- `ros2_mqtt/` — `"mqtt"` middleware over `mqtt::CustomMQTTDevice`; base64 JPEG, never retained.
-- `xrce_dds/` — `"xrce_dds"` middleware; `XrceDdsComponent`, `XcdrCodec`, `transport_udp` (own lwIP socket), `transport_serial` (UART shim). Caps: topics 16, readers/writers 8, stream 2048.
+- `ros2_mqtt/` — `"mqtt"` middleware over `mqtt::CustomMQTTDevice`; base64-in-JSON JPEG by default (`use_b64: false` = raw JPEG bytes), never retained.
+- `xrce_dds/` — `"xrce_dds"` middleware; `XrceDdsComponent`, `XcdrCodec`, `transport_udp` (own lwIP socket), `transport_serial` (UART shim). Caps: topics 16, readers/writers 8, stream 2048. Micro-XRCE-DDS-Client v3.0.2 + micro-CDR v2.0.2 are vendored under `vendor/` (custom-transport + stream-framing only, baked `config.h`); see `vendor/VENDORED.md`. Do NOT re-add them as submodules — `external_components` never inits submodules.
 - `examples/` — 4 demos (joy lamp, stewart MQTT, stewart DDS, xiao camera). All use `external_components: {type: local, path: ../esphome/components/}`.
-- `tests/` — `test_ros2_phase1.py` (schema), `test_xrce_dds_config.py` (schema), `test_ros2_msg_parity.py` (stdlib-only IDL parity).
+- `tests/` — `test_ros2_phase1.py` (schema), `test_xrce_dds_config.py` (schema), `test_ros2_msg_parity.py` (stdlib-only IDL parity), `test_dds_capture.py` (stdlib-only capture-tool tests), `test_xrce_vendor.py` (stdlib-only vendored-tree checks).
+- `tools/dds_capture/` — host-side XRCE-DDS capture (no ROS 2): `capture.py` (agent/echo/save/record), `dds_types.py` (DDS naming mirror + CDR helpers, mirrors `xrce_dds_codec.cpp`), `Dockerfile` (prebuilt `microros/micro-ros-agent:jazzy` base — do NOT switch back to a MicroXRCEAgent source build, v2.4.x superbuild is broken upstream). Python here is host Python (3.12), not ESPHome codegen.
 
 ## Commands
 
@@ -70,11 +71,11 @@ No lint/typecheck config in repo; keep `python -m compileall` clean and match ex
 
 ## Testing
 
-- Schema tests need `esphome` installed (`pytest.importorskip`). Parity test must stay stdlib-only.
+- Schema tests need `esphome` installed (`pytest.importorskip`). Parity and vendor tests must stay stdlib-only.
 - Before PR: `python -m pytest tests/ -v` green, `esphome config` passes on touched examples.
 - Never commit `secrets.yaml`, `.esphome/`, build artifacts, or PoC leftovers in `scratch/`.
 
 ## Git
 
 - Never commit unless explicitly asked. Check `git status` for ignored-path leakage before committing.
-- Submodules: `third_party/common_interfaces`, `xrce_dds/third_party/{Micro-XRCE-DDS-Client,micro-CDR}` — don't vendor copies elsewhere.
+- Submodules: `third_party/common_interfaces` — don't vendor copies elsewhere.
