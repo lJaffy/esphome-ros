@@ -46,12 +46,19 @@ constexpr uint16_t XRCE_IMG_HISTORY = 32;
 constexpr size_t XRCE_TOPIC_NAME_LEN = 96;
 constexpr size_t XRCE_XML_BUF_LEN = 384;
 
-// Worker task topology (Phase 2, hard-coded): one task on the APP core owns
-// every uxr_* call, stream/table/buffer state, and all counters. The loop()
-// thread only enqueues queue items below and reads atomics. Queues carry
-// memcpy payloads (never pointers into caller buffers) so no mutex is needed
-// on the data path; FreeRTOS queue ops provide the memory barriers.
+// Worker task topology (Phase 2, hard-coded): one task owns every uxr_*
+// call, stream/table/buffer state, and all counters. Pinned to the APP core
+// (core 1) on dual-core chips, core 0 on single-core chips (ESP32-C6/C3/S2:
+// pinning to 1 asserts in xTaskCreatePinnedToCore). The loop() thread only
+// enqueues queue items below and reads atomics. Queues carry memcpy payloads
+// (never pointers into caller buffers) so no mutex is needed on the data
+// path; FreeRTOS queue ops provide the memory barriers.
+#if defined(CONFIG_FREERTOS_UNICORE) || \
+    (defined(SOC_CPU_CORES_NUM) && SOC_CPU_CORES_NUM == 1)
+constexpr int XRCE_WORKER_CORE = 0;
+#else
 constexpr int XRCE_WORKER_CORE = 1;  // APP core, alongside Arduino/IDF loopTask
+#endif
 constexpr int XRCE_WORKER_PRIO = 5;
 constexpr size_t XRCE_WORKER_STACK = 24576;
 constexpr size_t XRCE_OUT_QUEUE_DEPTH = 8;
