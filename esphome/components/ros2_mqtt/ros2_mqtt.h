@@ -30,6 +30,9 @@ class Ros2MqttComponent : public Component, public mqtt::CustomMQTTDevice, publi
                      const ros2::MiddlewareOptions *opts = nullptr) override;
   bool connected() const override;
   const char *name() const override { return "mqtt"; }
+  bool call_service(const std::string &service, const ros2::ServiceDef *type, const void *req, size_t len,
+                    uint32_t timeout_ms, ros2::ServiceReplyCallback cb) override;
+  bool cancel_service(const std::string &service) override;
 
  protected:
   std::string expand_prefix_(const std::string &topic) const;

@@ -29,6 +29,10 @@ class XcdrCodec {
   uint32_t size_of(const ros2::TypeDef *type, const void *sample, size_t len);
   bool serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void *sample, size_t len);
   bool deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out, size_t out_len);
+  uint32_t request_size(const ros2::ServiceDef *service);
+  bool serialize_request(ucdrBuffer *ub, const ros2::ServiceDef *service, const void *req, size_t len);
+  bool deserialize_reply(ucdrBuffer *ub, const ros2::ServiceDef *service, void *out, size_t out_len);
+  uint32_t reply_size(const ros2::ServiceDef *service, const void *reply, size_t len);
 };
 
 // ROS <-> DDS name mapping, matching rmw_microxrcedds (utils.c):
@@ -40,6 +44,11 @@ class XcdrCodec {
 // so a failed `ros2 topic echo` after connect points here first.
 bool dds_topic_name(const char *ros_topic, char *out, size_t cap);
 const char *dds_type_name(const ros2::TypeDef *type);
+bool dds_service_request_names(const char *ros_service, char *req_topic, size_t req_cap, char *req_type,
+                               size_t req_type_cap, char *rep_topic, size_t rep_cap, char *rep_type,
+                               size_t rep_type_cap);
+uint32_t service_request_size(const ros2::ServiceDef *service);
+uint32_t service_reply_size(const ros2::ServiceDef *service, const void *reply, size_t len);
 
 }  // namespace xrce_dds
 }  // namespace esphome

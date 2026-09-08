@@ -34,6 +34,19 @@ const TypeDef *find_type(const char *name) {
   return nullptr;
 }
 
+static const ServiceDef K_SERVICE_DEFS[] = {
+    {"std_srvs/Trigger", "std_srvs__Trigger_Request", "std_srvs__Trigger_Response", sizeof(TriggerReqMsg),
+     sizeof(TriggerResMsg)},
+};
+
+const ServiceDef *find_service(const char *name) {
+  for (const auto &def : K_SERVICE_DEFS) {
+    if (strcmp(def.name, name) == 0)
+      return &def;
+  }
+  return nullptr;
+}
+
 bool is_multi_joint_type(const TypeDef *type) {
   if (type == nullptr)
     return false;

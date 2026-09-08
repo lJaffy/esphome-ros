@@ -44,6 +44,10 @@ def _auto_load(config=None):
                 libs.add("servo")
         elif sub.get(CONF_TARGETS) is not None:
             libs.add("servo")
+    for svc in config.get(CONF_SERVICES, []):
+        if (trigger := svc.get(CONF_TRIGGER)) is not None:
+            if trigger.get("switch") is not None:
+                libs.add("switch")
     for pub in config.get(CONF_PUBLICATIONS, []):
         if (source := pub.get(CONF_SOURCE)) is not None:
             for kind in ("sensor", "switch", "binary_sensor", "camera", "light"):
@@ -120,6 +124,10 @@ CONF_ORIENTATION_Z = "orientation_z"
 CONF_ORIENTATION_W = "orientation_w"
 CONF_RAW = "raw"
 CONF_USE_B64 = "use_b64"
+CONF_SERVICES = "services"
+CONF_SERVICE = "service"
+CONF_TRIGGER = "trigger"
+CONF_TIMEOUT = "timeout"
 
 SCALAR_TYPES = [
     "std_msgs/Bool",
@@ -154,6 +162,10 @@ GPS_TYPES = [
     "sensor_msgs/NavSatFix",
 ]
 SUPPORTED_TYPES = SCALAR_TYPES + MULTI_JOINT_TYPES + LIGHT_TYPES + IMAGE_TYPES + TELEMETRY_TYPES + MOTION_TYPES + IMU_TYPES + GPS_TYPES
+
+SUPPORTED_SERVICE_TYPES = [
+    "std_srvs/Trigger",
+]
 
 # Types with std_msgs/Header: stamp comes from the time: source, frame_id
 # from each publication's frame_id:.
@@ -338,6 +350,46 @@ def _single_source_schema():
             cv.Optional(CONF_GPS): _gps_source_schema(),
         }
     )
+
+
+def _service_trigger_schema():
+    return cv.Schema(
+        {
+            cv.Optional("switch"): _entity_ref(Switch),
+        }
+    )
+
+
+def _validate_service(config: ConfigType) -> ConfigType:
+    type_ = config[CONF_TYPE]
+    if type_ not in SUPPORTED_SERVICE_TYPES:
+        raise cv.Invalid(
+            f"Type {type_} is not a supported service type {SUPPORTED_SERVICE_TYPES}")
+    if "server" in config or "replier" in config:
+        raise cv.Invalid(
+            "This bridge is client-only: server:/replier: roles are rejected")
+    trigger = config.get(CONF_TRIGGER, {})
+    kinds = [k for k in ("switch",) if trigger.get(k) is not None]
+    if len(kinds) != 1:
+        raise cv.Invalid("trigger: needs exactly one of switch:")
+    for key in (CONF_QOS, CONF_FRAME_ID, CONF_TRANSFORMS, CONF_TF_TOPIC,
+                CONF_CHILD_FRAME_ID, CONF_USE_B64, CONF_RAW):
+        if key in config:
+            raise cv.Invalid(f"{key}: not valid with services:")
+    return config
+
+
+SERVICE_SCHEMA = cv.All(
+    cv.Schema(
+        {
+            cv.Required(CONF_SERVICE): cv.string,
+            cv.Required(CONF_TYPE): cv.one_of(*SUPPORTED_SERVICE_TYPES),
+            cv.Required(CONF_TRIGGER): _service_trigger_schema(),
+            cv.Optional(CONF_TIMEOUT, default="5s"): cv.positive_time_period_milliseconds,
+        }
+    ),
+    _validate_service,
+)
 
 
 def _transform_schema():
@@ -578,6 +630,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DEFAULT_PUBLISH_INTERVAL, default="1s"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_SUBSCRIPTIONS, default=[]): cv.ensure_list(SUBSCRIPTION_SCHEMA),
         cv.Optional(CONF_PUBLICATIONS, default=[]): cv.ensure_list(PUBLICATION_SCHEMA),
+        cv.Optional(CONF_SERVICES, default=[]): cv.ensure_list(SERVICE_SCHEMA),
         cv.Optional(CONF_STATUS_SENSOR): bs_comp.binary_sensor_schema(BinarySensor),
         cv.Optional(CONF_TIME_ID): cv.use_id(time_comp.RealTimeClock),
     }
@@ -668,6 +721,14 @@ async def to_code(config: ConfigType) -> None:
     if (time_id := config.get(CONF_TIME_ID)) is not None:
         time_var = await cg.get_variable(time_id)
         cg.add(var.set_time(time_var))
+
+    for svc in config[CONF_SERVICES]:
+        trigger = svc[CONF_TRIGGER]
+        if (sw := trigger.get("switch")) is not None:
+            ent = await cg.get_variable(sw[CONF_ID])
+            cg.add(var.add_service_client(
+                svc[CONF_SERVICE], svc[CONF_TYPE], ent,
+                svc[CONF_TIMEOUT]))
 
     for sub in config[CONF_SUBSCRIPTIONS]:
         topic = sub[CONF_TOPIC]

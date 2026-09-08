@@ -168,6 +168,25 @@ bool Ros2MqttComponent::publish_image(const std::string &topic, const uint8_t *j
   return ok;
 }
 
+bool Ros2MqttComponent::call_service(const std::string &service, const ros2::ServiceDef *type,
+                                      const void *req, size_t len, uint32_t timeout_ms,
+                                      ros2::ServiceReplyCallback cb) {
+  (void) service;
+  (void) type;
+  (void) req;
+  (void) len;
+  (void) timeout_ms;
+  (void) cb;
+  ESP_LOGE(TAG, "Services are DDS-only; service client refused on MQTT");
+  return false;
+}
+
+bool Ros2MqttComponent::cancel_service(const std::string &service) {
+  (void) service;
+  ESP_LOGE(TAG, "Services are DDS-only; service client refused on MQTT");
+  return false;
+}
+
 bool Ros2MqttComponent::connected() const {
   return const_cast<Ros2MqttComponent *>(this)->is_connected();
 }

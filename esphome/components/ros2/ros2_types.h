@@ -196,8 +196,25 @@ namespace esphome
       uint8_t position_covariance_type{0};
     };
 
+    struct TriggerReqMsg {
+    };
+
+    struct TriggerResMsg {
+      bool success{false};
+      char message[ROS2_STRING_LEN]{0};
+    };
+
+    struct ServiceDef {
+      const char *name;
+      const char *request_type_name;
+      const char *reply_type_name;
+      size_t request_size;
+      size_t reply_size;
+    };
+
     const TypeDef *find_type(const char *name);
     bool is_multi_joint_type(const TypeDef *type);
+    const ServiceDef *find_service(const char *name);
 
   } // namespace ros2
 } // namespace esphome

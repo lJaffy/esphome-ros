@@ -35,6 +35,7 @@ struct MiddlewareOptions {
 };
 
 using SampleCallback = std::function<void(const void *sample, size_t len)>;
+using ServiceReplyCallback = std::function<void(bool ok, bool timed_out, const void *reply, size_t len)>;
 
 class Ros2Middleware {
  public:
@@ -56,6 +57,20 @@ class Ros2Middleware {
   }
   virtual bool connected() const = 0;
   virtual const char *name() const = 0;
+  virtual bool call_service(const std::string &service, const ServiceDef *type, const void *req, size_t len,
+                            uint32_t timeout_ms, ServiceReplyCallback cb) {
+    (void) service;
+    (void) type;
+    (void) req;
+    (void) len;
+    (void) timeout_ms;
+    (void) cb;
+    return false;
+  }
+  virtual bool cancel_service(const std::string &service) {
+    (void) service;
+    return false;
+  }
 };
 
 class MiddlewareRegistry {

@@ -196,6 +196,44 @@ const char *dds_type_name(const ros2::TypeDef *type) {
   return dds_type_suffix(type->name);
 }
 
+bool dds_service_request_names(const char *ros_service, char *req_topic, size_t req_cap, char *req_type,
+                               size_t req_type_cap, char *rep_topic, size_t rep_cap, char *rep_type,
+                               size_t rep_type_cap) {
+  if (ros_service == nullptr || req_topic == nullptr || req_type == nullptr || rep_topic == nullptr ||
+      rep_type == nullptr)
+    return false;
+  size_t n = strlen(ros_service);
+  if (n == 0 || n + 12 > req_cap || n + 12 > rep_cap)
+    return false;
+  memcpy(req_topic, "rq", 2);
+  memcpy(req_topic + 2, ros_service, n + 1);
+  memcpy(rep_topic, "rr", 2);
+  memcpy(rep_topic + 2, ros_service, n + 1);
+  const char *req = "std_srvs::srv::dds_::Trigger_Request_";
+  const char *rep = "std_srvs::srv::dds_::Trigger_Response_";
+  if (strlen(req) + 1 > req_type_cap || strlen(rep) + 1 > rep_type_cap)
+    return false;
+  memcpy(req_type, req, strlen(req) + 1);
+  memcpy(rep_type, rep, strlen(rep) + 1);
+  return true;
+}
+
+uint32_t service_request_size(const ros2::ServiceDef *service) {
+  if (service == nullptr || strcmp(service->name, "std_srvs/Trigger") != 0)
+    return 0;
+  return 0;
+}
+
+uint32_t service_reply_size(const ros2::ServiceDef *service, const void *reply, size_t len) {
+  if (service == nullptr || strcmp(service->name, "std_srvs/Trigger") != 0 || reply == nullptr)
+    return 0;
+  if (len < sizeof(ros2::TriggerResMsg))
+    return 0;
+  auto *msg = static_cast<const ros2::TriggerResMsg *>(reply);
+  uint32_t size = 1;
+  return str_size(size, msg->message);
+}
+
 uint32_t XcdrCodec::size_of(const ros2::TypeDef *type, const void *sample, size_t len) {
   if (type == nullptr || sample == nullptr)
     return 0;
@@ -488,6 +526,37 @@ bool XcdrCodec::serialize(ucdrBuffer *ub, const ros2::TypeDef *type, const void 
     return ucdr_serialize_uint8_t(ub, msg->position_covariance_type);
   }
   return false;
+}
+
+uint32_t XcdrCodec::request_size(const ros2::ServiceDef *service) {
+  return service_request_size(service);
+}
+
+bool XcdrCodec::serialize_request(ucdrBuffer *ub, const ros2::ServiceDef *service, const void *req,
+                                  size_t len) {
+  if (ub == nullptr || service == nullptr)
+    return false;
+  if (strcmp(service->name, "std_srvs/Trigger") != 0)
+    return false;
+  (void) req;
+  (void) len;
+  return true;
+}
+
+bool XcdrCodec::deserialize_reply(ucdrBuffer *ub, const ros2::ServiceDef *service, void *out,
+                                  size_t out_len) {
+  if (ub == nullptr || service == nullptr || out == nullptr)
+    return false;
+  if (strcmp(service->name, "std_srvs/Trigger") != 0 || out_len < sizeof(ros2::TriggerResMsg))
+    return false;
+  auto *msg = static_cast<ros2::TriggerResMsg *>(out);
+  memset(msg, 0, sizeof(*msg));
+  return ucdr_deserialize_bool(ub, &msg->success) &&
+         ucdr_deserialize_string(ub, msg->message, sizeof(msg->message));
+}
+
+uint32_t XcdrCodec::reply_size(const ros2::ServiceDef *service, const void *reply, size_t len) {
+  return service_reply_size(service, reply, len);
 }
 
 bool XcdrCodec::deserialize(ucdrBuffer *ub, const ros2::TypeDef *type, void *out, size_t out_len) {
