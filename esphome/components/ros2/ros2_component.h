@@ -89,6 +89,7 @@ namespace ros2
 constexpr size_t ROS2_MAX_SUBSCRIPTIONS = 16;
 constexpr size_t ROS2_MAX_PUBLICATIONS = 16;
 constexpr size_t ROS2_MAX_TARGETS = 16;
+constexpr size_t ROS2_MAX_SERVICES = 4;
 
 enum class SubKind : uint8_t {
   SERVO_SINGLE,
@@ -127,6 +128,15 @@ struct InboundItem {
   uint8_t sub_idx{0};
   uint16_t len{0};
   uint8_t data[ROS2_INBOUND_SAMPLE_MAX]{0};
+};
+
+struct ServiceClient {
+  std::string service;
+  const ServiceDef *type{nullptr};
+  switch_::Switch *trigger{nullptr};
+  bool last_state{false};
+  bool pending{false};
+  uint32_t timeout_ms{5000};
 };
 
 static_assert(sizeof(JointStateMsg) <= ROS2_INBOUND_SAMPLE_MAX, "inbound payload too small");
@@ -271,6 +281,8 @@ class Ros2Component : public Component {
   void dump_config() override;
   float get_setup_priority() const override;
 
+  void add_service_client(const char *service, const char *type, switch_::Switch *trigger,
+                            uint32_t timeout_ms);
   void add_servo_subscription(const char *topic, const char *type, servo::Servo *servo, float min_rad,
                               float max_rad);
   void add_joint_subscription(const char *topic, const char *type, servo::Servo *servo, const char *joint_name,
@@ -376,6 +388,10 @@ class Ros2Component : public Component {
   size_t num_subs_{0};
   std::array<Publication, ROS2_MAX_PUBLICATIONS> pubs_{};
   size_t num_pubs_{0};
+  std::array<ServiceClient, ROS2_MAX_SERVICES> svcs_{};
+  size_t num_svcs_{0};
+  uint32_t svc_ok_{0};
+  uint32_t svc_fail_{0};
   uint32_t default_interval_ms_{1000};
   binary_sensor::BinarySensor *status_sensor_{nullptr};
   struct ServoLevel {

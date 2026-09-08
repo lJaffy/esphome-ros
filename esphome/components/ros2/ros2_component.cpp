@@ -16,6 +16,72 @@ namespace esphome
 
     float Ros2Component::get_setup_priority() const { return setup_priority::AFTER_CONNECTION; }
 
+    void Ros2Component::add_service_client(const char *service, const char *type, switch_::Switch *trigger,
+                                           uint32_t timeout_ms)
+    {
+      if (service == nullptr || type == nullptr || trigger == nullptr)
+        return;
+      if (this->num_svcs_ >= ROS2_MAX_SERVICES)
+      {
+        ESP_LOGE(TAG, "Too many service clients (max %u)", (unsigned) ROS2_MAX_SERVICES);
+        return;
+      }
+      const ServiceDef *def = find_service(type);
+      if (def == nullptr)
+      {
+        ESP_LOGE(TAG, "Unknown service type '%s' for service %s", type, service);
+        return;
+      }
+      ServiceClient svc;
+      svc.service = service;
+      svc.type = def;
+      svc.trigger = trigger;
+      svc.timeout_ms = timeout_ms != 0 ? timeout_ms : 5000;
+#ifdef USE_SWITCH
+      const size_t idx = this->num_svcs_;
+      trigger->add_on_state_callback([this, idx](bool state) {
+        if (idx >= this->num_svcs_)
+          return;
+        ServiceClient &s = this->svcs_[idx];
+        bool rising = state && !s.last_state;
+        s.last_state = state;
+        if (!rising || s.pending)
+          return;
+        if (this->mw_ == nullptr || !this->mw_->connected())
+          return;
+        TriggerReqMsg req;
+        s.pending = true;
+        if (!this->mw_->call_service(
+                s.service, s.type, &req, sizeof(req), s.timeout_ms,
+                [this, idx](bool ok, bool timed_out, const void *reply, size_t len) {
+                  (void) len;
+                  if (idx >= this->num_svcs_)
+                    return;
+                  ServiceClient &sc = this->svcs_[idx];
+                  sc.pending = false;
+                  if (ok && reply != nullptr)
+                  {
+                    this->svc_ok_++;
+                    auto *res = static_cast<const TriggerResMsg *>(reply);
+                    ESP_LOGI(TAG, "Service %s reply success=%d msg=%s", sc.service.c_str(),
+                             (int) res->success, res->message);
+                  }
+                  else
+                  {
+                    this->svc_fail_++;
+                    ESP_LOGW(TAG, "Service %s failed (timeout=%d)", sc.service.c_str(),
+                             (int) timed_out);
+                  }
+                }))
+        {
+          s.pending = false;
+          this->svc_fail_++;
+        }
+      });
+#endif
+      this->svcs_[this->num_svcs_++] = svc;
+    }
+
     void Ros2Component::setup()
     {
       this->inbound_ = xQueueCreateStatic(ROS2_INBOUND_DEPTH, sizeof(InboundItem),
@@ -251,8 +317,9 @@ namespace esphome
       ESP_LOGCONFIG(TAG, "ROS 2 bridge:");
       ESP_LOGCONFIG(TAG, "  Middleware: %s (%s)", this->middleware_name_.c_str(),
                     this->mw_ != nullptr ? "found" : "MISSING");
-      ESP_LOGCONFIG(TAG, "  Subscriptions: %u, Publications: %u", (unsigned)this->num_subs_,
-                    (unsigned)this->num_pubs_);
+      ESP_LOGCONFIG(TAG, "  Subscriptions: %u, Publications: %u, Services: %u (ok=%u fail=%u)",
+                    (unsigned)this->num_subs_, (unsigned)this->num_pubs_, (unsigned)this->num_svcs_,
+                    (unsigned)this->svc_ok_, (unsigned)this->svc_fail_);
       ESP_LOGCONFIG(TAG, "  Inbound drops: %u",
                     (unsigned) this->inbound_drop_.load(std::memory_order_relaxed));
       ESP_LOGCONFIG(TAG, "  Loop max gap: %ums, slow passes (>100ms): %u",

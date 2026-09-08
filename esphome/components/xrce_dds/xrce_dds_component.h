@@ -31,6 +31,8 @@ namespace xrce_dds {
 constexpr size_t XRCE_MAX_TOPICS = 16;
 constexpr size_t XRCE_MAX_READERS = 8;
 constexpr size_t XRCE_MAX_WRITERS = 8;
+constexpr size_t XRCE_MAX_SERVICES = 4;
+constexpr size_t XRCE_SVC_QUEUE_DEPTH = 8;
 constexpr size_t XRCE_STREAM_BUF_SIZE = 2048;
 constexpr uint16_t XRCE_STREAM_HISTORY = 4;
 // One history slot: samples larger than this (e.g. Odometry with zeroed
@@ -72,7 +74,10 @@ constexpr size_t XRCE_IMG_MAILBOX_MAX = 49152;  // 48 kB frame cap (> 44 kB stre
 constexpr size_t XRCE_IMG_MAILBOX_MAX = 64;
 #endif
 constexpr uint8_t XRCE_CTRL_SUBSCRIBE = 1;
+constexpr uint8_t XRCE_SVC_CREATE_CLIENT = 2;
+constexpr uint8_t XRCE_SVC_CALL = 3;
 constexpr size_t XRCE_SUB_STAGING_MAX = 16;
+constexpr size_t XRCE_SVC_CB_STAGING_MAX = 8;
 
 // Queue-safe copy of the middleware options (frame_id materialized: the
 // live MiddlewareOptions only borrows its caller's char buffer).
@@ -105,6 +110,14 @@ struct CtrlItem {
   char topic[XRCE_TOPIC_NAME_LEN]{0};
   const ros2::TypeDef *type{nullptr};
   QueueOpts opts;
+  uint8_t slot{0};
+};
+
+struct SvcCtrlItem {
+  uint8_t op{0};  // XRCE_SVC_CREATE_CLIENT / XRCE_SVC_CALL
+  char service[XRCE_TOPIC_NAME_LEN]{0};
+  const ros2::ServiceDef *type{nullptr};
+  uint32_t timeout_ms{5000};
   uint8_t slot{0};
 };
 
@@ -147,6 +160,17 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
     bool created{false};
   };
 
+  struct RequesterEntry {
+    std::string service;
+    const ros2::ServiceDef *type{nullptr};
+    uxrObjectId requester_id{};
+    bool created{false};
+    bool pending{false};
+    uint16_t pending_seq{0};
+    uint32_t deadline_ms{0};
+    ros2::ServiceReplyCallback cb;
+  };
+
   XrceDdsComponent() = default;
   ~XrceDdsComponent() override;
 
@@ -170,6 +194,9 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
 
   bool subscribe(const std::string &topic, const ros2::TypeDef *type, ros2::SampleCallback cb,
                  const ros2::MiddlewareOptions *opts = nullptr) override;
+  bool call_service(const std::string &service, const ros2::ServiceDef *type, const void *req, size_t len,
+                    uint32_t timeout_ms, ros2::ServiceReplyCallback cb) override;
+  bool cancel_service(const std::string &service) override;
   bool publish(const std::string &topic, const ros2::TypeDef *type, const void *sample, size_t len,
                const ros2::MiddlewareOptions *opts = nullptr) override;
   bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
@@ -182,6 +209,7 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   int transport_write(const uint8_t *buf, size_t len);
   int transport_read(uint8_t *buf, size_t len);
   bool pump_once();
+  void on_reply_(uxrObjectId requester_id, uint16_t reply_id, ucdrBuffer *ub, uint16_t length);
 
  protected:
   // Worker entry + per-iteration handlers. Everything below runs on the
@@ -189,6 +217,8 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   static void worker_trampoline_(void *arg);
   void worker_loop_();
   void handle_ctrl_(const CtrlItem &c);
+  void handle_svc_(const SvcCtrlItem &c);
+  void sweep_service_timeouts_();
   void handle_outbound_(const OutboundItem &o);
   void handle_image_(const ImageItem &img);
   void snapshot_tables_();  // worker-only: refresh dump snapshots
@@ -196,6 +226,8 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   // public overrides are thin enqueue wrappers (loop-safe, non-blocking).
   bool subscribe_on_worker_(const char *topic, const ros2::TypeDef *type, uint8_t slot,
                             const QueueOpts &opts);
+  bool create_client_on_worker_(const char *service, const ros2::ServiceDef *type, uint8_t slot);
+  bool call_service_on_worker_(const char *service, uint32_t timeout_ms, uint8_t slot);
   bool publish_on_worker_(const char *topic, const ros2::TypeDef *type, const void *sample, size_t len,
                           const QueueOpts &opts);
   bool publish_image_on_worker_(const char *topic, const uint8_t *jpeg, size_t len,
@@ -215,14 +247,17 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   ReaderEntry *find_reader_cstr_(const char *topic);
   WriterEntry *find_writer_cstr_(const char *topic);
   ReaderEntry *find_reader_by_id_(uxrObjectId id);
-  // Distinct DDS topics across readers+writers. Each new topic mints a
-  // topic entity on the agent, bounded by max_topics_.
+  RequesterEntry *find_requester_cstr_(const char *service);
+  // Distinct DDS topics across readers+writers+requesters (rq/rr pairs).
+  // Each new topic mints a topic entity on the agent, bounded by max_topics_.
   size_t count_topics_();
   bool topic_allowed_(const std::string &topic);
   bool topic_allowed_cstr_(const char *topic);
   void on_data_(uxrObjectId reader_id, ucdrBuffer *ub, uint16_t length);
   static void topic_trampoline_(uxrSession *session, uxrObjectId object_id, uint16_t request_id,
-                                uxrStreamId stream_id, ucdrBuffer *ub, uint16_t length, void *args);
+                                 uxrStreamId stream_id, ucdrBuffer *ub, uint16_t length, void *args);
+  static void reply_trampoline_(uxrSession *session, uxrObjectId object_id, uint16_t request_id,
+                                uint16_t reply_id, ucdrBuffer *ub, uint16_t length, void *args);
 
   std::string agent_address_;
   uint16_t agent_port_{8888};
@@ -275,6 +310,9 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   size_t num_readers_{0};
   std::array<WriterEntry, XRCE_MAX_WRITERS> writers_{};
   size_t num_writers_{0};
+  std::array<RequesterEntry, XRCE_MAX_SERVICES> requesters_{};
+  size_t num_requesters_{0};
+  uint16_t next_requester_n_{0x31};
 
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> in_buf_{};
@@ -355,6 +393,19 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   std::atomic<uint32_t> snap_readers_{0};
   std::atomic<uint32_t> snap_writers_{0};
   std::atomic<uint32_t> snap_topics_{0};
+  std::atomic<uint32_t> snap_services_{0};
+  std::atomic<uint32_t> svc_ok_{0};
+  std::atomic<uint32_t> svc_timeout_{0};
+  std::atomic<uint32_t> svc_fail_{0};
+  // Service control queue (loop->worker): client creation + call requests.
+  QueueHandle_t svc_queue_{nullptr};
+  StaticQueue_t svc_queue_ctrl_{};
+  uint8_t svc_queue_storage_[XRCE_SVC_QUEUE_DEPTH * sizeof(SvcCtrlItem)]{};
+  // Reply-callback staging: loop thread writes slot once before enqueueing
+  // its SvcCtrlItem; the worker moves it into requesters_[] exactly once.
+  std::array<ros2::ServiceReplyCallback, XRCE_SVC_CB_STAGING_MAX> svc_staging_{};
+  size_t num_svc_staging_{0};  // loop-only
+  uint8_t svc_reply_buf_[sizeof(ros2::TriggerResMsg)]{0};
 };
 
 }  // namespace xrce_dds

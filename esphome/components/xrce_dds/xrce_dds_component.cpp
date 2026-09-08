@@ -218,6 +218,7 @@ void XrceDdsComponent::setup() {
                                                               this->out_be_buf_.size());
   this->in_be_stream_ = uxr_create_input_best_effort_stream(&this->session_);
   uxr_set_topic_callback(&this->session_, &XrceDdsComponent::topic_trampoline_, this);
+  uxr_set_reply_callback(&this->session_, &XrceDdsComponent::reply_trampoline_, this);
   this->session_init_ = true;
   if (this->max_packet_length_ != UXR_CONFIG_CUSTOM_TRANSPORT_MTU) {
     ESP_LOGW(TAG, "max_packet_length %u ignored: vendored client MTU is %u",
@@ -229,12 +230,14 @@ void XrceDdsComponent::setup() {
                                         this->out_queue_storage_, &this->out_queue_ctrl_);
   this->ctrl_queue_ = xQueueCreateStatic(XRCE_CTRL_QUEUE_DEPTH, sizeof(CtrlItem),
                                          this->ctrl_queue_storage_, &this->ctrl_queue_ctrl_);
+  this->svc_queue_ = xQueueCreateStatic(XRCE_SVC_QUEUE_DEPTH, sizeof(SvcCtrlItem),
+                                         this->svc_queue_storage_, &this->svc_queue_ctrl_);
   this->img_box_ = nullptr;
   if (this->images_available_) {
     this->img_box_ = xQueueCreateStatic(1, sizeof(ImageItem), this->img_box_storage_,
                                         &this->img_box_ctrl_);
   }
-  if (this->out_queue_ == nullptr || this->ctrl_queue_ == nullptr ||
+  if (this->out_queue_ == nullptr || this->ctrl_queue_ == nullptr || this->svc_queue_ == nullptr ||
       (this->images_available_ && this->img_box_ == nullptr)) {
     ESP_LOGE(TAG, "Worker queue creation failed");
     this->free_image_buffers_();
@@ -275,6 +278,10 @@ void XrceDdsComponent::worker_loop_() {
     CtrlItem c;
     while (xQueueReceive(this->ctrl_queue_, &c, 0) == pdTRUE)
       this->handle_ctrl_(c);
+    SvcCtrlItem s;
+    while (xQueueReceive(this->svc_queue_, &s, 0) == pdTRUE)
+      this->handle_svc_(s);
+    this->sweep_service_timeouts_();
     // Data plane: drain all pending small samples, then the latest image.
     // (Image received into the heap work buffer: a 49 kB stack local here
     // smashed the heap past the worker stack top.)
@@ -386,9 +393,14 @@ void XrceDdsComponent::dump_config() {
                 (unsigned) (this->out_queue_ != nullptr ? uxQueueMessagesWaiting(this->out_queue_)
                                                         : 0),
                 (unsigned) (this->ctrl_queue_ != nullptr ? uxQueueMessagesWaiting(this->ctrl_queue_)
-                                                         : 0),
+                                                          : 0),
                 (unsigned) (this->img_box_ != nullptr ? uxQueueMessagesWaiting(this->img_box_)
-                                                      : 0));
+                                                       : 0));
+  ESP_LOGCONFIG(TAG, "  Services: %u, svc ok/timeout/fail: %u/%u/%u",
+                (unsigned) this->snap_services_.load(std::memory_order_relaxed),
+                (unsigned) this->svc_ok_.load(std::memory_order_relaxed),
+                (unsigned) this->svc_timeout_.load(std::memory_order_relaxed),
+                (unsigned) this->svc_fail_.load(std::memory_order_relaxed));
 }
 
 void XrceDdsComponent::drop_link_() {
@@ -408,9 +420,20 @@ void XrceDdsComponent::drop_link_() {
     this->readers_[i].created = false;
   for (size_t i = 0; i < this->num_writers_; i++)
     this->writers_[i].created = false;
+  for (size_t i = 0; i < this->num_requesters_; i++) {
+    this->requesters_[i].created = false;
+    if (this->requesters_[i].pending) {
+      this->requesters_[i].pending = false;
+      auto cb = std::move(this->requesters_[i].cb);
+      if (cb)
+        cb(false, true, nullptr, 0);
+      this->svc_timeout_.fetch_add(1, std::memory_order_relaxed);
+    }
+  }
   this->next_topic_n_ = 1;
   this->next_reader_n_ = READER_ID_BASE;
   this->next_writer_n_ = WRITER_ID_BASE;
+  this->next_requester_n_ = 0x31;
   ESP_LOGW(TAG, "Link to agent lost; retrying");
 }
 
@@ -473,6 +496,14 @@ void build_endpoint_xml(char *out, size_t cap, const char *kind, const char *top
 // best_effort endpoints; reliable ones keep the bare form above so default
 // behavior is byte-identical. If the agent rejects this dialect the entity
 // creation fails loudly (never silently) — verify against your agent.
+void build_requester_xml(char *out, size_t cap, const char *service, const char *req_type,
+                           const char *rep_type, const char *req_topic, const char *rep_topic) {
+  snprintf(out, cap,
+           "<dds><requester profile_name=\"%s\" service_name=\"%s\" request_type=\"%s\" reply_type=\"%s\" "
+           "request_topic_name=\"%s\" reply_topic_name=\"%s\"></requester></dds>",
+           service, service, req_type, rep_type, req_topic, rep_topic);
+}
+
 void build_endpoint_qos_xml(char *out, size_t cap, const char *kind, const char *topic,
                             const char *type, bool reliable) {
   if (reliable) {
@@ -514,6 +545,13 @@ void copy_topic_str(char *dst, const std::string &src) {
 
 }  // namespace
 
+XrceDdsComponent::RequesterEntry *XrceDdsComponent::find_requester_cstr_(const char *service) {
+  for (size_t i = 0; i < this->num_requesters_; i++)
+    if (this->requesters_[i].service == service)
+      return &this->requesters_[i];
+  return nullptr;
+}
+
 XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_(const std::string &topic) {
   for (size_t i = 0; i < this->num_readers_; i++)
     if (this->readers_[i].topic == topic)
@@ -550,7 +588,7 @@ XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_by_id_(uxrObjectId 
 }
 
 size_t XrceDdsComponent::count_topics_() {
-  const std::string *seen[XRCE_MAX_READERS + XRCE_MAX_WRITERS];
+  const std::string *seen[XRCE_MAX_READERS + XRCE_MAX_WRITERS + 2 * XRCE_MAX_SERVICES];
   size_t n = 0;
   auto add = [&](const std::string &topic) {
     for (size_t i = 0; i < n; i++)
@@ -562,6 +600,24 @@ size_t XrceDdsComponent::count_topics_() {
     add(this->readers_[i].topic);
   for (size_t i = 0; i < this->num_writers_; i++)
     add(this->writers_[i].topic);
+  for (size_t i = 0; i < this->num_requesters_; i++) {
+    char req[XRCE_TOPIC_NAME_LEN];
+    snprintf(req, sizeof(req), "rq%s", this->requesters_[i].service.c_str());
+    std::string rqs = req;
+    for (size_t j = 0; j < n; j++)
+      if (*seen[j] == rqs)
+        goto skip_rq;
+    seen[n++] = &this->requesters_[i].service;
+  skip_rq:;
+    char rep[XRCE_TOPIC_NAME_LEN];
+    snprintf(rep, sizeof(rep), "rr%s", this->requesters_[i].service.c_str());
+    std::string rps = rep;
+    for (size_t j = 0; j < n; j++)
+      if (*seen[j] == rps)
+        goto skip_rr;
+    seen[n++] = &this->requesters_[i].service;
+  skip_rr:;
+  }
   return n;
 }
 
@@ -575,6 +631,9 @@ bool XrceDdsComponent::topic_allowed_cstr_(const char *topic) {
       return true;
   for (size_t i = 0; i < this->num_writers_; i++)
     if (this->writers_[i].topic == topic)
+      return true;
+  for (size_t i = 0; i < this->num_requesters_; i++)
+    if (this->requesters_[i].service == topic)
       return true;
   size_t budget = this->max_topics_ < XRCE_MAX_TOPICS ? this->max_topics_ : XRCE_MAX_TOPICS;
   if (this->count_topics_() >= budget) {
@@ -627,13 +686,36 @@ bool XrceDdsComponent::create_pending_entities_() {
   struct Pending {
     ReaderEntry *reader{nullptr};
     WriterEntry *writer{nullptr};
+    RequesterEntry *requester{nullptr};
     uint16_t topic_req{UXR_INVALID_REQUEST_ID};
+    uint16_t topic_req2{UXR_INVALID_REQUEST_ID};
     uint16_t endpoint_req{UXR_INVALID_REQUEST_ID};
   };
-  std::array<Pending, XRCE_MAX_READERS + XRCE_MAX_WRITERS> pending{};
+  std::array<Pending, XRCE_MAX_READERS + XRCE_MAX_WRITERS + XRCE_MAX_SERVICES> pending{};
   size_t num_pending = 0;
 
   char dds_topic[XRCE_TOPIC_NAME_LEN];
+  char req_topic[XRCE_TOPIC_NAME_LEN];
+  char req_type[XRCE_TOPIC_NAME_LEN];
+  char rep_topic[XRCE_TOPIC_NAME_LEN];
+  char rep_type[XRCE_TOPIC_NAME_LEN];
+  for (size_t i = 0; i < this->num_requesters_ && num_pending < pending.size(); i++) {
+    RequesterEntry &e = this->requesters_[i];
+    if (e.created || e.type == nullptr)
+      continue;
+    if (!dds_service_request_names(e.service.c_str(), req_topic, sizeof(req_topic), req_type,
+                                   sizeof(req_type), rep_topic, sizeof(rep_topic), rep_type,
+                                   sizeof(rep_type)))
+      continue;
+    Pending p;
+    p.requester = &e;
+    e.requester_id = uxr_object_id(this->next_requester_n_++, UXR_REQUESTER_ID);
+    build_requester_xml(xml, sizeof(xml), e.service.c_str(), req_type, rep_type, req_topic, rep_topic);
+    p.endpoint_req = uxr_buffer_create_requester_xml(&this->session_, this->out_stream_, e.requester_id,
+                                                     this->participant_id_, xml, UXR_REPLACE);
+    reqs[n++] = p.endpoint_req;
+    pending[num_pending++] = p;
+  }
   for (size_t i = 0; i < this->num_readers_ && num_pending < pending.size(); i++) {
     ReaderEntry &e = this->readers_[i];
     if (e.created || e.type == nullptr)
@@ -717,6 +799,8 @@ bool XrceDdsComponent::create_pending_entities_() {
     bool ok = true;
     if (p.topic_req != UXR_INVALID_REQUEST_ID)
       ok = status[s++] == UXR_STATUS_OK;
+    if (ok && p.topic_req2 != UXR_INVALID_REQUEST_ID)
+      ok = status[s++] == UXR_STATUS_OK;
     if (ok && p.endpoint_req != UXR_INVALID_REQUEST_ID)
       ok = status[s++] == UXR_STATUS_OK;
     if (!ok)
@@ -729,6 +813,9 @@ bool XrceDdsComponent::create_pending_entities_() {
     } else if (p.writer != nullptr) {
       p.writer->created = true;
       ESP_LOGI(TAG, "Advertising: %s (%s)", p.writer->topic.c_str(), p.writer->type->name);
+    } else if (p.requester != nullptr) {
+      p.requester->created = true;
+      ESP_LOGI(TAG, "Service client: %s (%s)", p.requester->service.c_str(), p.requester->type->name);
     }
   }
   // Flush the READ_DATA requests without blocking.
@@ -744,6 +831,84 @@ bool XrceDdsComponent::create_reader_(ReaderEntry &entry) {
 bool XrceDdsComponent::create_writer_(WriterEntry &entry) {
   (void) entry;
   return this->create_pending_entities_();
+}
+
+bool XrceDdsComponent::create_client_on_worker_(const char *service, const ros2::ServiceDef *type,
+                                                uint8_t slot) {
+  if (type == nullptr || slot >= XRCE_SVC_CB_STAGING_MAX)
+    return false;
+  if (RequesterEntry *e = this->find_requester_cstr_(service)) {
+    e->type = type;
+    return true;
+  }
+  if (!this->topic_allowed_cstr_(service))
+    return false;
+  if (this->num_requesters_ >= XRCE_MAX_SERVICES) {
+    ESP_LOGE(TAG, "Too many service clients for %s", service);
+    return false;
+  }
+  RequesterEntry &e = this->requesters_[this->num_requesters_++];
+  e.service = service;
+  e.type = type;
+  e.created = false;
+  e.pending = false;
+  if (this->link_ == LinkState::LINK_UP)
+    this->create_pending_entities_();
+  return true;
+}
+
+bool XrceDdsComponent::call_service_on_worker_(const char *service, uint32_t timeout_ms, uint8_t slot) {
+  RequesterEntry *e = this->find_requester_cstr_(service);
+  if (e == nullptr || e->type == nullptr || slot >= XRCE_SVC_CB_STAGING_MAX)
+    return false;
+  if (this->link_ != LinkState::LINK_UP)
+    return false;
+  if (e->pending)
+    return false;
+  if (!e->created && !this->create_pending_entities_())
+    return false;
+  if (!e->created)
+    return false;
+  ucdrBuffer ub;
+  if (uxr_prepare_output_stream(&this->session_, this->out_stream_, e->requester_id, &ub, 0) ==
+      UXR_INVALID_REQUEST_ID)
+    return false;
+  uint16_t seq = uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
+  if (seq == UXR_INVALID_REQUEST_ID)
+    return false;
+  e->pending = true;
+  e->pending_seq = seq;
+  e->deadline_ms = this->now_ms_() + (timeout_ms != 0 ? timeout_ms : 5000);
+  e->cb = std::move(this->svc_staging_[slot]);
+  uxrDeliveryControl dc{};
+  dc.max_samples = UXR_MAX_SAMPLES_UNLIMITED;
+  uxr_buffer_request_data(&this->session_, this->out_stream_, e->requester_id, this->in_stream_, &dc);
+  this->pump_once();
+  return true;
+}
+
+void XrceDdsComponent::sweep_service_timeouts_() {
+  const uint32_t now = this->now_ms_();
+  for (size_t i = 0; i < this->num_requesters_; i++) {
+    RequesterEntry &e = this->requesters_[i];
+    if (!e.pending || now < e.deadline_ms)
+      continue;
+    e.pending = false;
+    auto cb = std::move(e.cb);
+    if (cb)
+      cb(false, true, nullptr, 0);
+    this->svc_timeout_.fetch_add(1, std::memory_order_relaxed);
+  }
+}
+
+void XrceDdsComponent::handle_svc_(const SvcCtrlItem &c) {
+  if (c.op == XRCE_SVC_CREATE_CLIENT) {
+    this->create_client_on_worker_(c.service, c.type, c.slot);
+  } else if (c.op == XRCE_SVC_CALL) {
+    if (!this->call_service_on_worker_(c.service, c.timeout_ms, c.slot))
+      this->svc_fail_.fetch_add(1, std::memory_order_relaxed);
+  }
+  this->snapshot_tables_();
 }
 
 // --- Ros2Middleware (loop-safe enqueue wrappers) --------------------------------
@@ -808,6 +973,7 @@ void XrceDdsComponent::snapshot_tables_() {
   this->snap_readers_.store((uint32_t) this->num_readers_, std::memory_order_relaxed);
   this->snap_writers_.store((uint32_t) this->num_writers_, std::memory_order_relaxed);
   this->snap_topics_.store((uint32_t) this->count_topics_(), std::memory_order_relaxed);
+  this->snap_services_.store((uint32_t) this->num_requesters_, std::memory_order_relaxed);
 }
 
 void XrceDdsComponent::handle_ctrl_(const CtrlItem &c) {
@@ -1071,7 +1237,79 @@ void XrceDdsComponent::handle_image_(const ImageItem &img) {
   this->snapshot_tables_();  // writer emplace happens lazily on first frame
 }
 
+bool XrceDdsComponent::call_service(const std::string &service, const ros2::ServiceDef *type,
+                                     const void *req, size_t len, uint32_t timeout_ms,
+                                     ros2::ServiceReplyCallback cb) {
+  (void) req;
+  (void) len;
+  if (type == nullptr || !cb)
+    return false;
+  if (this->svc_queue_ == nullptr)
+    return false;
+  if (this->num_svc_staging_ >= XRCE_SVC_CB_STAGING_MAX)
+    return false;
+  const uint8_t slot = (uint8_t) this->num_svc_staging_++;
+  this->svc_staging_[slot] = std::move(cb);
+  SvcCtrlItem create;
+  create.op = XRCE_SVC_CREATE_CLIENT;
+  strncpy(create.service, service.c_str(), XRCE_TOPIC_NAME_LEN - 1);
+  create.type = type;
+  create.slot = slot;
+  xQueueSend(this->svc_queue_, &create, 0);
+  SvcCtrlItem call;
+  call.op = XRCE_SVC_CALL;
+  strncpy(call.service, service.c_str(), XRCE_TOPIC_NAME_LEN - 1);
+  call.type = type;
+  call.timeout_ms = timeout_ms;
+  call.slot = slot;
+  if (xQueueSend(this->svc_queue_, &call, 0) != pdTRUE)
+    return false;
+  return true;
+}
+
+bool XrceDdsComponent::cancel_service(const std::string &service) {
+  RequesterEntry *e = this->find_requester_cstr_(service.c_str());
+  if (e == nullptr || !e->pending)
+    return false;
+  e->pending = false;
+  auto cb = std::move(e->cb);
+  if (cb)
+    cb(false, false, nullptr, 0);
+  return true;
+}
+
 // --- Inbound dispatch -------------------------------------------------------
+
+void XrceDdsComponent::reply_trampoline_(uxrSession *session, uxrObjectId object_id, uint16_t request_id,
+                                         uint16_t reply_id, ucdrBuffer *ub, uint16_t length,
+                                         void *args) {
+  (void) session;
+  (void) request_id;
+  static_cast<XrceDdsComponent *>(args)->on_reply_(object_id, reply_id, ub, length);
+}
+
+void XrceDdsComponent::on_reply_(uxrObjectId requester_id, uint16_t reply_id, ucdrBuffer *ub,
+                                 uint16_t length) {
+  (void) length;
+  for (size_t i = 0; i < this->num_requesters_; i++) {
+    RequesterEntry &e = this->requesters_[i];
+    if (!e.created || e.requester_id.id != requester_id.id)
+      continue;
+    if (!e.pending || e.type == nullptr)
+      return;
+    this->last_rx_.store(this->now_ms_(), std::memory_order_relaxed);
+    this->rx_count_.fetch_add(1, std::memory_order_relaxed);
+    if (this->codec_.deserialize_reply(ub, e.type, this->svc_reply_buf_, sizeof(this->svc_reply_buf_))) {
+      e.pending = false;
+      auto cb = std::move(e.cb);
+      if (cb)
+        cb(true, false, this->svc_reply_buf_, e.type->reply_size);
+      this->svc_ok_.fetch_add(1, std::memory_order_relaxed);
+    }
+    (void) reply_id;
+    return;
+  }
+}
 
 void XrceDdsComponent::topic_trampoline_(uxrSession *session, uxrObjectId object_id,
                                          uint16_t request_id, uxrStreamId stream_id, ucdrBuffer *ub,
