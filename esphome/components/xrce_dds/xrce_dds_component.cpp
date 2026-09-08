@@ -59,6 +59,10 @@ void XrceDdsComponent::free_image_buffers_() {
     img_alloc.deallocate(this->img_stage_, 1);
     this->img_stage_ = nullptr;
   }
+  if (this->img_work_ != nullptr) {
+    img_alloc.deallocate(this->img_work_, 1);
+    this->img_work_ = nullptr;
+  }
   this->images_available_ = false;
 }
 
@@ -193,8 +197,9 @@ void XrceDdsComponent::setup() {
   this->img_box_storage_ = ext_alloc.allocate(sizeof(ImageItem));
   ExternalRAMAllocator<ImageItem> img_alloc;
   this->img_stage_ = img_alloc.allocate(1);
+  this->img_work_ = img_alloc.allocate(1);
   if (this->img_buf_ != nullptr && this->img_box_storage_ != nullptr &&
-      this->img_stage_ != nullptr) {
+      this->img_stage_ != nullptr && this->img_work_ != nullptr) {
     this->images_available_ = true;
   } else {
     ESP_LOGE(TAG, "Image buffer allocation failed; image publishing disabled");
@@ -271,12 +276,14 @@ void XrceDdsComponent::worker_loop_() {
     while (xQueueReceive(this->ctrl_queue_, &c, 0) == pdTRUE)
       this->handle_ctrl_(c);
     // Data plane: drain all pending small samples, then the latest image.
+    // (Image received into the heap work buffer: a 49 kB stack local here
+    // smashed the heap past the worker stack top.)
     OutboundItem o;
     while (xQueueReceive(this->out_queue_, &o, 0) == pdTRUE)
       this->handle_outbound_(o);
-    ImageItem img;
-    if (xQueueReceive(this->img_box_, &img, 0) == pdTRUE)
-      this->handle_image_(img);
+    if (this->img_box_ != nullptr && this->img_work_ != nullptr &&
+        xQueueReceive(this->img_box_, this->img_work_, 0) == pdTRUE)
+      this->handle_image_(*this->img_work_);
     // Session pump / connect state machine (moved from loop() verbatim,
     // with worker-epoch now). uxr_run_session_timeout(0) reports output
     // confirmation, not transport health: a just-queued image reads
@@ -369,6 +376,10 @@ void XrceDdsComponent::dump_config() {
                 (unsigned) this->img_drop_prepare_.load(std::memory_order_relaxed),
                 (unsigned) this->img_drop_encode_.load(std::memory_order_relaxed),
                 (unsigned) this->img_drop_mailbox_overwrite_.load(std::memory_order_relaxed));
+  if (this->worker_ != nullptr) {
+    ESP_LOGCONFIG(TAG, "  Worker stack HWM: %u bytes free",
+                  (unsigned) (uxTaskGetStackHighWaterMark(this->worker_) * sizeof(StackType_t)));
+  }
 }
 
 void XrceDdsComponent::drop_link_() {

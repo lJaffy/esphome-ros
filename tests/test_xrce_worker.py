@@ -130,7 +130,25 @@ def test_ros2_dispatch_on_loop():
     assert "dispatch_joints_" not in loop  # dispatches run via drain, not inline
 
 
+def test_image_received_into_heap_not_stack():
+    # Regression: a by-value ImageItem local in worker_loop_() zeroed ~49 kB
+    # through the worker stack top and smashed the heap (TLSF assert in the
+    # next malloc). The mailbox is received into a heap work buffer.
+    body = worker_body()
+    assert "ImageItem img;" not in body
+    assert "img_work_" in XH
+    assert "img_work_" in XCPP
+    assert "Worker stack HWM" in XCPP
+
+
+def worker_body():
+    m = re.search(r"void XrceDdsComponent::worker_loop_\(\) \{(.*?)\n\}", XCPP, re.DOTALL)
+    assert m, "worker_loop_() not found"
+    return m.group(1)
+
+
 def test_frozen_contracts_survived():
+    # Middleware interface + Track-1 constants untouched by the split.
     # Middleware interface + Track-1 constants untouched by the split.
     assert "publish_image(const std::string &topic, const uint8_t *jpeg" in XH
     assert "XRCE_IMG_HISTORY" in XH

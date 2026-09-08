@@ -53,7 +53,7 @@ constexpr size_t XRCE_XML_BUF_LEN = 384;
 // on the data path; FreeRTOS queue ops provide the memory barriers.
 constexpr int XRCE_WORKER_CORE = 1;  // APP core, alongside Arduino/IDF loopTask
 constexpr int XRCE_WORKER_PRIO = 5;
-constexpr size_t XRCE_WORKER_STACK = 12288;
+constexpr size_t XRCE_WORKER_STACK = 24576;
 constexpr size_t XRCE_OUT_QUEUE_DEPTH = 8;
 constexpr size_t XRCE_CTRL_QUEUE_DEPTH = 16;
 // Image mailbox cap: full-size frames on camera builds, token size
@@ -340,6 +340,9 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   // would overflow both the loop task stack and DRAM .bss). The worker only
   // ever sees the queue copy.
   ImageItem *img_stage_{nullptr};
+  // Worker-only image receive buffer (heap: receiving the 1-deep mailbox
+  // into a stack local smashed the heap past the worker stack top).
+  ImageItem *img_work_{nullptr};
   // Table snapshots for dump_config() (loop thread): tables are
   // worker-exclusive, so the worker refreshes these after each mutation.
   std::atomic<uint32_t> snap_readers_{0};
