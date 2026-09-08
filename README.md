@@ -193,7 +193,7 @@ xrce_dds:
   max_topics: 16
   max_datawriters: 8
   max_datareaders: 8
-  # max_packet_length: 512    # currently ignored, vendored MTU wins
+  # max_packet_length: 1472   # currently ignored, vendored MTU wins
 ```
 
 Agent:
@@ -203,7 +203,7 @@ MicroXRCEAgent udp4 -p 8888
 ros2 topic echo /joint_states
 ```
 
-Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4. `max_topics`/`max_datawriters`/`max_datareaders` are clamped at validation to those compile-time caps, and distinct DDS topics (shared across readers/writers) are budgeted at runtime — over-budget `subscribe`/`publish` fails loudly instead of overflowing. `dump_config` reports topics used, cumulative TX ok/fail and RX counts, and last-RX age (stale age with live link = silent-agent symptom, see known gap).
+Caps: topics 16, readers/writers 8 each, stream buf 2048, history 4; image stream 44 kB / history 32 (~1408 B slots, one UDP datagram each — no IP fragmentation); vendored MTU 1472. `max_topics`/`max_datawriters`/`max_datareaders` are clamped at validation to those compile-time caps, and distinct DDS topics (shared across readers/writers) are budgeted at runtime — over-budget `subscribe`/`publish` fails loudly instead of overflowing. `dump_config` reports topics used, cumulative TX ok/fail and RX counts, per-reason image drops, and last-RX age (stale age with live link = silent-agent symptom, see known gap).
 
 ## Examples
 

@@ -60,7 +60,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Required(CONF_TRANSPORT): TRANSPORT_SCHEMA,
             cv.Optional(CONF_DOMAIN_ID, default=0): cv.int_range(min=0, max=255),
             cv.Optional(CONF_CLIENT_NAME, default="esp32-node"): cv.string,
-            cv.Optional(CONF_MAX_PACKET_LENGTH, default=512): cv.positive_int,
+            cv.Optional(CONF_MAX_PACKET_LENGTH, default=1472): cv.positive_int,
             cv.Optional(CONF_PROCESS_INTERVAL, default="10ms"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_KEEPALIVE_TIMEOUT, default="5s"): cv.positive_time_period_milliseconds,
             cv.Optional(CONF_MAX_TOPICS, default=16): cv.int_range(min=1, max=16),

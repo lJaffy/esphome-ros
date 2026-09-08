@@ -6,12 +6,14 @@ esp32:
   board: esp32-s3-devkitc-1
 
 logger:
+  level: WARN
 
 api:
 
 wifi:
   ssid: wifi
   password: wifi_password
+  power_save_mode: none
 
 external_components:
   - source:

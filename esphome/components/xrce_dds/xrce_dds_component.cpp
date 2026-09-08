@@ -121,6 +121,28 @@ int XrceDdsComponent::transport_read(uint8_t *buf, size_t len) {
 
 bool XrceDdsComponent::pump_once() { return uxr_run_session_timeout(&this->session_, 0); }
 
+bool XrceDdsComponent::pump_timed_(int timeout_ms) {
+  return uxr_run_session_timeout(&this->session_, timeout_ms);
+}
+
+void XrceDdsComponent::reset_img_stream_() {
+  // Light recovery for a poisoned fragmented image frame: reset only the
+  // image reliable stream history, preserving participant/writers/socket.
+  // Internal API (defs linked via xrce_dds_vendor.c); forward-declared here
+  // so the public amalgamated header stays untouched.
+  extern "C" {
+  struct uxrOutputReliableStream *uxr_get_output_reliable_stream(struct uxrStreamStorage *,
+                                                                 uint8_t);
+  void uxr_reset_output_reliable_stream(struct uxrOutputReliableStream *);
+  }
+  auto *s = uxr_get_output_reliable_stream(&this->session_.streams, this->img_stream_.index);
+  if (s != nullptr)
+    uxr_reset_output_reliable_stream(s);
+  // Pinned fragments previously forced pump_once() to read "unconfirmed";
+  // re-anchor confirmation so the keepalive gate does not false-trip.
+  this->last_confirm_ = App.get_loop_component_start_time();
+}
+
 // --- Lifecycle --------------------------------------------------------------
 
 void XrceDdsComponent::setup() {
@@ -137,7 +159,7 @@ void XrceDdsComponent::setup() {
   this->in_stream_ = uxr_create_input_reliable_stream(&this->session_, this->in_buf_.data(),
                                                       this->in_buf_.size(), XRCE_STREAM_HISTORY);
   this->img_stream_ = uxr_create_output_reliable_stream(&this->session_, this->img_buf_.data(),
-                                                        this->img_buf_.size(), XRCE_STREAM_HISTORY);
+                                                         this->img_buf_.size(), XRCE_IMG_HISTORY);
   this->out_be_stream_ = uxr_create_output_best_effort_stream(&this->session_, this->out_be_buf_.data(),
                                                               this->out_be_buf_.size());
   this->in_be_stream_ = uxr_create_input_best_effort_stream(&this->session_);
@@ -227,6 +249,10 @@ void XrceDdsComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  TX ok: %u, TX fail: %u, RX: %u, last RX age: %ums", (unsigned) this->tx_ok_,
                 (unsigned) this->tx_fail_, (unsigned) this->rx_count_,
                 (unsigned) (this->last_rx_ == 0 ? 0 : now - this->last_rx_));
+  ESP_LOGCONFIG(TAG, "  Images ok: %u drop(link/no-writer/prepare/encode): %u/%u/%u/%u",
+                (unsigned) this->img_ok_, (unsigned) this->img_drop_link_down_,
+                (unsigned) this->img_drop_no_writer_, (unsigned) this->img_drop_prepare_,
+                (unsigned) this->img_drop_encode_);
 }
 
 void XrceDdsComponent::drop_link_() {
@@ -647,8 +673,10 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     ESP_LOGE(TAG, "Topic name too long: %s", topic.c_str());
     return false;
   }
-  if (this->link_ != LinkState::LINK_UP)
+  if (this->link_ != LinkState::LINK_UP) {
+    this->img_drop_link_down_++;
     return false;
+  }
   const ros2::TypeDef *type = ros2::find_type("sensor_msgs/CompressedImage");
   if (type == nullptr)
     return false;
@@ -656,11 +684,13 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   if (w == nullptr) {
     if (!this->topic_allowed_(topic)) {
       this->tx_fail_++;
+      this->img_drop_no_writer_++;
       return false;
     }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
       ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
       this->tx_fail_++;
+      this->img_drop_no_writer_++;
       return false;
     }
     WriterEntry &e = this->writers_[this->num_writers_++];
@@ -671,6 +701,7 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   }
   if (!w->created && !this->create_writer_(*w)) {
     this->tx_fail_++;
+    this->img_drop_no_writer_++;
     return false;
   }
   // CompressedImage members: header (stamp/frame from opts when the bridge
@@ -694,9 +725,23 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   total += (uint32_t) (ucdr_alignment(total, 4) + 4);      // data length
   total += (uint32_t) len;
   ucdrBuffer ub;
-  if (uxr_prepare_output_stream_fragmented(&this->session_, this->img_stream_, w->writer_id, &ub,
-                                           total, image_flush, this) == UXR_INVALID_REQUEST_ID) {
+  constexpr int IMG_PREPARE_RETRY_MS = 50;
+  constexpr uint8_t IMG_ENCODE_FAIL_LIMIT = 3;
+  uint16_t prepare_id =
+      uxr_prepare_output_stream_fragmented(&this->session_, this->img_stream_, w->writer_id, &ub,
+                                           total, image_flush, this);
+  if (prepare_id == UXR_INVALID_REQUEST_ID) {
+    // One bounded wait for in-flight ACKs before dropping: transient
+    // congestion (history full) often clears within tens of ms at 21kB/s.
+    this->pump_timed_(IMG_PREPARE_RETRY_MS);
+    prepare_id =
+        uxr_prepare_output_stream_fragmented(&this->session_, this->img_stream_, w->writer_id, &ub,
+                                             total, image_flush, this);
+  }
+  if (prepare_id == UXR_INVALID_REQUEST_ID) {
+    ESP_LOGW(TAG, "Image prepare congested for %s (%u bytes)", topic.c_str(), (unsigned) len);
     this->tx_fail_++;
+    this->img_drop_prepare_++;
     return false;
   }
   // TEMP PROBE: serialize (memcpy/format) cost per frame.
@@ -712,13 +757,21 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   if (!ser_ok) {
     ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
     this->tx_fail_++;
-    // The failed frame left partial fragments queued: drop the link so the
-    // reconnect resets stream history, otherwise unacked fragments pin it
-    // and every later pump reads "unconfirmed".
-    this->drop_link_();
+    this->img_drop_encode_++;
+    // Soft recovery: reset only the image stream so one poisoned frame does
+    // not pin history and force every later pump to read "unconfirmed".
+    // A truly dead agent still heals via the keepalive gate, and persistent
+    // encode failures fall back to a full link drop.
+    this->reset_img_stream_();
+    if (++this->img_encode_fails_ >= IMG_ENCODE_FAIL_LIMIT) {
+      this->img_encode_fails_ = 0;
+      this->drop_link_();
+    }
     return false;
   }
   this->tx_ok_++;
+  this->img_ok_++;
+  this->img_encode_fails_ = 0;
   this->probe_frames_++;
   this->probe_last_frame_ms_ = App.get_loop_component_start_time();
   return true;

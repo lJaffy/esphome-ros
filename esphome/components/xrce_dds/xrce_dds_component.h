@@ -30,10 +30,13 @@ constexpr uint16_t XRCE_STREAM_HISTORY = 4;
 // One history slot: samples larger than this (e.g. Odometry with zeroed
 // covariances) go out via the fragmented write path instead.
 constexpr size_t XRCE_STREAM_BLOCK = XRCE_STREAM_BUF_SIZE / XRCE_STREAM_HISTORY;
-// Image stream: one JPEG (~21 kB observed, larger with bright scenes)
-// must fit across the 4 history slots without mid-frame ACKs, since the
-// flush callback only pumps with timeout 0. 64 kB holds ~63 kB frames.
-constexpr size_t XRCE_IMG_BUF_SIZE = 65536;
+// Image stream: small slots x deep history so each XRCE fragment fits in one
+// UDP datagram (no IP fragmentation). Slot wire size ~= IMG_BUF/HISTORY
+// (~1412 B with 44 kB/32) stays under the 1472 B MTU; 19 kB frames need ~14
+// slots, 40 kB ~29, all without mid-frame ACKs. History must stay a power
+// of two for the vendored seq-num arithmetic.
+constexpr size_t XRCE_IMG_BUF_SIZE = 45056;
+constexpr uint16_t XRCE_IMG_HISTORY = 32;
 constexpr size_t XRCE_TOPIC_NAME_LEN = 96;
 constexpr size_t XRCE_XML_BUF_LEN = 384;
 
@@ -105,6 +108,8 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
 
  protected:
   void drop_link_();
+  void reset_img_stream_();
+  bool pump_timed_(int timeout_ms);
   bool try_connect_();
   bool create_pending_entities_();
   bool create_reader_(ReaderEntry &entry);
@@ -125,7 +130,7 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   TransportType transport_{TransportType::TRANSPORT_UDP};
   uint8_t domain_id_{0};
   std::string client_name_{"esp32-node"};
-  uint16_t max_packet_length_{512};
+  uint16_t max_packet_length_{1472};
   uint32_t process_interval_ms_{10};
   uint32_t keepalive_timeout_ms_{5000};
   uint8_t max_topics_{16};
@@ -179,6 +184,14 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uint32_t tx_ok_{0};
   uint32_t tx_fail_{0};
   uint32_t rx_count_{0};
+  // Granular image drop reasons (subset of TX; tx_ok_/tx_fail_ kept for parsers).
+  uint32_t img_ok_{0};
+  uint32_t img_drop_link_down_{0};
+  uint32_t img_drop_no_writer_{0};
+  uint32_t img_drop_prepare_{0};
+  uint32_t img_drop_encode_{0};
+  // Consecutive mid-frame encode failures; falls back to drop_link_ at threshold.
+  uint8_t img_encode_fails_{0};
   // TEMP PROBE (tx-timing diagnosis; remove after): per-datagram send stats,
   // frame serialize cost, and ACK turnaround. Reported throttled, never
   // per-packet.

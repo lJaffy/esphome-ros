@@ -51,7 +51,12 @@ ESP-IDF and Arduino. Our code includes only `"xrce_dds_vendor.h"`.
   - `include/uxr/client/config.h` is generated (baked from CMake defaults
     with one tweak: 2 output reliable streams — `out_stream_` + `img_stream_`
     — 1 input reliable, 1 in/out × best-effort, attempts 10, interval 1000 ms,
-    heartbeat 100 ms, custom MTU 512, `UCLIENT_TWEAK_XRCE_WRITE_LIMIT` on).
+    heartbeat 100 ms, custom MTU 1472 (WiFi-safe Ethernet payload: 1500 - IP/UDP 28),
+   `UCLIENT_TWEAK_XRCE_WRITE_LIMIT` on). MTU is advertised to the agent in
+   CREATE_CLIENT and sizes the custom-transport receive buffer; the image
+   reliable stream is separately retuned (small slots x deep history) so
+   each XRCE fragment stays within one UDP datagram instead of
+   IP-fragmenting 16 kB jumbos.
 - `microcdr/` — micro-CDR **v2.0.2**, little-endian (`config.h` baked with
   `UCDR_MACHINE_ENDIANNESS = UCDR_LITTLE_ENDIANNESS`).
   - 5 `.c`: `common.c` + `types/{array,basic,sequence,string}.c`.

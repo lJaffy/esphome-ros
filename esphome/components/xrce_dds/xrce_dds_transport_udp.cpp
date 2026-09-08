@@ -3,6 +3,8 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -12,6 +14,12 @@ namespace esphome {
 namespace xrce_dds {
 
 static const char *const TAG = "xrce_dds";
+
+// lwIP buffers sized for ~32 in-flight 1472 B fragments (one 40 kB frame +
+// ACK/heartbeat headroom). setsockopt may clamp on constrained builds; best
+// effort only, never fatal.
+constexpr int UDP_SND_BUF = 65536;
+constexpr int UDP_RCV_BUF = 65536;
 
 bool XrceUdpTransport::open(const char *ip, uint16_t port) {
   this->close();
@@ -25,6 +33,17 @@ bool XrceUdpTransport::open(const char *ip, uint16_t port) {
     ::close(fd);
     return false;
   }
+  int snd = UDP_SND_BUF;
+  if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &snd, sizeof(snd)) < 0)
+    ESP_LOGW(TAG, "UDP SO_SNDBUF %d failed: %d", snd, errno);
+  int rcv = UDP_RCV_BUF;
+  if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv)) < 0)
+    ESP_LOGW(TAG, "UDP SO_RCVBUF %d failed: %d", rcv, errno);
+#ifdef IPTOS_LOWDELAY
+  int tos = IPTOS_LOWDELAY;
+  if (setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) < 0)
+    ESP_LOGV(TAG, "UDP IP_TOS low-delay failed: %d", errno);
+#endif
   struct sockaddr_in addr {};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
