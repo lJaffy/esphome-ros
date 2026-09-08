@@ -273,8 +273,8 @@ UCDR_SEQUENCE_DECLARATIONS(_double, double)
 
 #endif //_MICROCDR_MICRO_CDR_H_
 /* === END microcdr/include/ucdr/microcdr.h === */
-/* === BEGIN microxrcedds/include/uxr/client/profile/multithread/multithread.h === */
-// Copyright 2021 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+/* === BEGIN microxrcedds/include/uxr/client/client.h === */
+// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -288,13 +288,8 @@ UCDR_SEQUENCE_DECLARATIONS(_double, double)
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef UXR_CLIENT_PROFILE_MULTITHREAD_H_
-#define UXR_CLIENT_PROFILE_MULTITHREAD_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
+#ifndef _UXR_CLIENT_CLIENT_H_
+#define _UXR_CLIENT_CLIENT_H_
 
 /* === BEGIN microxrcedds/include/uxr/client/config.h === */
 // Generated vendored config for ESPHome xrce_dds component.
@@ -336,6 +331,121 @@ extern "C"
 
 #endif  // _UXR_CLIENT_CONFIG_H_
 /* === END microxrcedds/include/uxr/client/config.h === */
+
+#ifdef UCLIENT_PROFILE_DISCOVERY
+#include <uxr/client/profile/discovery/discovery.h>
+#endif //UCLIENT_PROFILE_DISCOVERY
+
+/* === BEGIN microxrcedds/include/uxr/client/core/session/session.h === */
+// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file
+ */
+
+#ifndef UXR_CLIENT_CORE_SESSION_SESSION_H_
+#define UXR_CLIENT_CORE_SESSION_SESSION_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+/* === BEGIN microxrcedds/include/uxr/client/core/session/session_info.h === */
+// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H_
+#define _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/seq_num.h === */
+// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
+#define _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+#include <stdint.h>
+
+typedef uint16_t uxrSeqNum;
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif // _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
+/* === END microxrcedds/include/uxr/client/core/session/stream/seq_num.h === */
+/* === BEGIN microxrcedds/include/uxr/client/core/session/object_id.h === */
+// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
+#define _UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
+
+/**
+ * @file
+ */
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
 /* === BEGIN microxrcedds/include/uxr/client/visibility.h === */
 // Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -371,6 +481,162 @@ extern "C"
 
 #endif // _UXR_CLIENT_VISIBILITY_H_
 /* === END microxrcedds/include/uxr/client/visibility.h === */
+#include <stdint.h>
+
+#define UXR_INVALID_ID     0x00
+#define UXR_PARTICIPANT_ID 0x01
+#define UXR_TOPIC_ID       0x02
+#define UXR_PUBLISHER_ID   0x03
+#define UXR_SUBSCRIBER_ID  0x04
+#define UXR_DATAWRITER_ID  0x05
+#define UXR_DATAREADER_ID  0x06
+#define UXR_REQUESTER_ID   0x07
+#define UXR_REPLIER_ID     0x08
+#define UXR_OTHER_ID       0x0F
+
+typedef struct uxrObjectId
+{
+    uint16_t id;
+    uint8_t type;
+
+} uxrObjectId;
+
+/**
+ * @brief This function creates an identifier to reference an entity.
+ * @ingroup     general_utils
+ * @param id	Identifier of the object, different for each type. There can be several objects with the same ID, provided they have different types.
+ * @param type	The type of the entity. It can be: UXR_PARTICIPANT_ID, UXR_TOPIC_ID, UXR_PUBLISHER_ID, UXR_SUBSCRIBER_ID, UXR_DATAWRITER_ID, UXR_DATAREADER_ID, UXR_REQUESTER_ID, or UXR_REPLIER_ID.
+ * @return	Generated entity identifier.
+ */
+UXRDLLAPI uxrObjectId uxr_object_id(
+        uint16_t id,
+        uint8_t type);
+
+UXRDLLAPI uxrObjectId uxr_object_id_from_raw(
+        const uint8_t* raw);
+
+UXRDLLAPI void uxr_object_id_to_raw(
+        uxrObjectId object_id,
+        uint8_t* raw);
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif //_UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
+/* === END microxrcedds/include/uxr/client/core/session/object_id.h === */
+#include <stdbool.h>
+
+#define UXR_STATUS_OK                     0x00
+#define UXR_STATUS_OK_MATCHED             0x01
+#define UXR_STATUS_ERR_DDS_ERROR          0x80
+#define UXR_STATUS_ERR_MISMATCH           0x81
+#define UXR_STATUS_ERR_ALREADY_EXISTS     0x82
+#define UXR_STATUS_ERR_DENIED             0x83
+#define UXR_STATUS_ERR_UNKNOWN_REFERENCE  0x84
+#define UXR_STATUS_ERR_INVALID_DATA       0x85
+#define UXR_STATUS_ERR_INCOMPATIBLE       0x86
+#define UXR_STATUS_ERR_RESOURCES          0x87
+#define UXR_STATUS_NONE                   0xFF //Never sent or received. It is used for managing an unknown status
+
+#define UXR_REUSE            0x01 << 1
+#define UXR_REPLACE          0x01 << 2
+#ifdef PERFORMANCE_TESTING
+#define UXR_ECHO             0x01 << 7
+#endif // ifdef PERFORMANCE_TESTING
+
+#define UXR_INVALID_REQUEST_ID 0
+
+#define UXR_REQUEST_NONE     0x00
+#define UXR_REQUEST_LOGIN    0x01
+#define UXR_REQUEST_LOGOUT   0x02
+
+typedef struct uxrSessionInfo
+{
+    uint8_t id;
+    uint8_t key[4];
+    uint8_t last_requested_status;
+    uint16_t last_request_id;
+
+} uxrSessionInfo;
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif // _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H
+/* === END microxrcedds/include/uxr/client/core/session/session_info.h === */
+/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/stream_storage.h === */
+// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_STREAM_STORAGE_H_
+#define _UXR_CLIENT_CORE_SESSION_STREAM_STREAM_STORAGE_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/output_best_effort_stream.h === */
+// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_OUTPUT_BEST_EFFORT_STREAM_H_
+#define _UXR_CLIENT_CORE_SESSION_STREAM_OUTPUT_BEST_EFFORT_STREAM_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+
+#ifdef UCLIENT_PROFILE_MULTITHREAD
+/* === BEGIN microxrcedds/include/uxr/client/profile/multithread/multithread.h === */
+// Copyright 2021 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef UXR_CLIENT_PROFILE_MULTITHREAD_H_
+#define UXR_CLIENT_PROFILE_MULTITHREAD_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
 /* === BEGIN microxrcedds/include/uxr/client/core/session/stream/stream_id.h === */
 // Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -605,249 +871,6 @@ UXRDLLAPI void uxr_unlock(
 
 #endif // UXR_CLIENT_PROFILE_MULTITHREAD_H_
 /* === END microxrcedds/include/uxr/client/profile/multithread/multithread.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/session/session.h === */
-// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @file
- */
-
-#ifndef UXR_CLIENT_CORE_SESSION_SESSION_H_
-#define UXR_CLIENT_CORE_SESSION_SESSION_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-/* === BEGIN microxrcedds/include/uxr/client/core/session/session_info.h === */
-// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H_
-#define _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/seq_num.h === */
-// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
-#define _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-#include <stdint.h>
-
-typedef uint16_t uxrSeqNum;
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif // _UXR_CLIENT_CORE_SESSION_STREAM_SEQ_NUM_H_
-/* === END microxrcedds/include/uxr/client/core/session/stream/seq_num.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/session/object_id.h === */
-// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
-#define _UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
-
-/**
- * @file
- */
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-#include <stdint.h>
-
-#define UXR_INVALID_ID     0x00
-#define UXR_PARTICIPANT_ID 0x01
-#define UXR_TOPIC_ID       0x02
-#define UXR_PUBLISHER_ID   0x03
-#define UXR_SUBSCRIBER_ID  0x04
-#define UXR_DATAWRITER_ID  0x05
-#define UXR_DATAREADER_ID  0x06
-#define UXR_REQUESTER_ID   0x07
-#define UXR_REPLIER_ID     0x08
-#define UXR_OTHER_ID       0x0F
-
-typedef struct uxrObjectId
-{
-    uint16_t id;
-    uint8_t type;
-
-} uxrObjectId;
-
-/**
- * @brief This function creates an identifier to reference an entity.
- * @ingroup     general_utils
- * @param id	Identifier of the object, different for each type. There can be several objects with the same ID, provided they have different types.
- * @param type	The type of the entity. It can be: UXR_PARTICIPANT_ID, UXR_TOPIC_ID, UXR_PUBLISHER_ID, UXR_SUBSCRIBER_ID, UXR_DATAWRITER_ID, UXR_DATAREADER_ID, UXR_REQUESTER_ID, or UXR_REPLIER_ID.
- * @return	Generated entity identifier.
- */
-UXRDLLAPI uxrObjectId uxr_object_id(
-        uint16_t id,
-        uint8_t type);
-
-UXRDLLAPI uxrObjectId uxr_object_id_from_raw(
-        const uint8_t* raw);
-
-UXRDLLAPI void uxr_object_id_to_raw(
-        uxrObjectId object_id,
-        uint8_t* raw);
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif //_UXR_CLIENT_CORE_SESSION_OBJECT_ID_H_
-/* === END microxrcedds/include/uxr/client/core/session/object_id.h === */
-#include <stdbool.h>
-
-#define UXR_STATUS_OK                     0x00
-#define UXR_STATUS_OK_MATCHED             0x01
-#define UXR_STATUS_ERR_DDS_ERROR          0x80
-#define UXR_STATUS_ERR_MISMATCH           0x81
-#define UXR_STATUS_ERR_ALREADY_EXISTS     0x82
-#define UXR_STATUS_ERR_DENIED             0x83
-#define UXR_STATUS_ERR_UNKNOWN_REFERENCE  0x84
-#define UXR_STATUS_ERR_INVALID_DATA       0x85
-#define UXR_STATUS_ERR_INCOMPATIBLE       0x86
-#define UXR_STATUS_ERR_RESOURCES          0x87
-#define UXR_STATUS_NONE                   0xFF //Never sent or received. It is used for managing an unknown status
-
-#define UXR_REUSE            0x01 << 1
-#define UXR_REPLACE          0x01 << 2
-#ifdef PERFORMANCE_TESTING
-#define UXR_ECHO             0x01 << 7
-#endif // ifdef PERFORMANCE_TESTING
-
-#define UXR_INVALID_REQUEST_ID 0
-
-#define UXR_REQUEST_NONE     0x00
-#define UXR_REQUEST_LOGIN    0x01
-#define UXR_REQUEST_LOGOUT   0x02
-
-typedef struct uxrSessionInfo
-{
-    uint8_t id;
-    uint8_t key[4];
-    uint8_t last_requested_status;
-    uint16_t last_request_id;
-
-} uxrSessionInfo;
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif // _UXR_CLIENT_CORE_SESSION_SESSION_INFO_H
-/* === END microxrcedds/include/uxr/client/core/session/session_info.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/stream_storage.h === */
-// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_STREAM_STORAGE_H_
-#define _UXR_CLIENT_CORE_SESSION_STREAM_STREAM_STORAGE_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-/* === BEGIN microxrcedds/include/uxr/client/core/session/stream/output_best_effort_stream.h === */
-// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_SESSION_STREAM_OUTPUT_BEST_EFFORT_STREAM_H_
-#define _UXR_CLIENT_CORE_SESSION_STREAM_OUTPUT_BEST_EFFORT_STREAM_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-
-#ifdef UCLIENT_PROFILE_MULTITHREAD
 #endif // ifdef UCLIENT_PROFILE_MULTITHREAD
 
 #include <stddef.h>
@@ -3515,8 +3538,8 @@ UXRDLLAPI bool uxr_buffer_performance(
 
 #endif // UXR_CLIENT_CORE_SESSION_SESSION_H
 /* === END microxrcedds/include/uxr/client/core/session/session.h === */
-/* === BEGIN microxrcedds/include/uxr/client/util/time.h === */
-// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+/* === BEGIN microxrcedds/include/uxr/client/core/session/write_access.h === */
+// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -3530,45 +3553,12 @@ UXRDLLAPI bool uxr_buffer_performance(
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef UXR_CLIENT_UTIL_TIME_H_
-#define UXR_CLIENT_UTIL_TIME_H_
+/**
+ * @file
+ */
 
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-#include <stdint.h>
-
-UXRDLLAPI int64_t uxr_millis(
-        void);
-
-UXRDLLAPI int64_t uxr_nanos(
-        void);
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif // UXR_CLIENT_UTIL_TIME_H_
-/* === END microxrcedds/include/uxr/client/util/time.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/communication/communication.h === */
-// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef _UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
-#define _UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
+#ifndef UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
+#define UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
 
 #ifdef __cplusplus
 extern "C"
@@ -3576,45 +3566,236 @@ extern "C"
 #endif // ifdef __cplusplus
 
 
-#include <stdint.h>
-#include <stddef.h>
-#include <stdbool.h>
+/** \addtogroup write Write access profile
+ *  The Write Access is used by the Client to handle the write operation on the Agent. The declaration of these functions can be found in uxr/client/profile/session/write_access.h.
+ *  @{
+ */
 
-#ifdef UCLIENT_PROFILE_MULTITHREAD
-#endif // ifdef UCLIENT_PROFILE_MULTITHREAD
-
-typedef bool (* send_msg_func)(
-        void* instance,
-        const uint8_t* buf,
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
+ *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
+ *
+ * @param session       A uxrSession structure previously initialized.
+ * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
+ * @param requester_id  The identifier of the XRCE Requester that will write the request into the DDS GDS.
+ * @param buffer        The pointer to the request data.
+ * @param len           The length of the request data.
+ * @return A `request_id` that identifies the XRCE request made by the Client.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ */
+uint16_t uxr_buffer_request(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId requester_id,
+        uint8_t* buffer,
         size_t len);
-typedef bool (* recv_msg_func)(
-        void* instance,
-        uint8_t** buf,
-        size_t* len,
-        int timeout);
-typedef uint8_t (* comm_error_func)(
-        void);
 
-typedef struct uxrCommunication
-{
-    void* instance;
-    send_msg_func send_msg;
-    recv_msg_func recv_msg;
-    comm_error_func comm_error;
-    uint16_t mtu;
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
+ *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
+ *
+ * @param session       A uxrSession structure previously initialized.
+ * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
+ * @param replier_id    The identifier of the XRCE Replier that will write the reply into the DDS GDS.
+ * @param sample_id     The `SampleIdentity` that identifies the request.
+ *                      It will be read by the Requester to filter and identify the reply.
+ * @param buffer        The pointer to the reply data.
+ * @param len           The length of the reply data.
+ * @return A `request_id` that identifies the XRCE request made by the Client.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ */
+uint16_t uxr_buffer_reply(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId replier_id,
+        SampleIdentity* sample_id,
+        uint8_t* buffer,
+        size_t len);
 
-#ifdef UCLIENT_PROFILE_MULTITHREAD
-    uxrMutex mutex;
-#endif // ifdef UCLIENT_PROFILE_MULTITHREAD
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
+ *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
+ *
+ * @param session       A uxrSession structure previously initialized.
+ * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
+ * @param datawriter_id The identifier of the XRCE Datawriter that will write the topic into the DDS GDS.
+ * @param buffer        The pointer to the topic data.
+ * @param len           The length of the topic data.
+ * @return A `request_id` that identifies the XRCE request made by the Publisher.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ */
+uint16_t uxr_buffer_topic(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId datawriter_id,
+        uint8_t* buffer,
+        size_t len);
 
-} uxrCommunication;
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
+ *        The submessage will be sent when `uxr_flash_output_stream` or `uxr_run_session` function are called.
+ *        As a result of the reception of this submessage, the Agent will write a topic into the DDS Global-Data-Space.
+ * @param session           A uxrSession structure previously initialized.
+ * @param stream_id         The output stream identifier where the WRITE_DATA submessage will be buffered.
+ * @param entity_id         The identifier of the XRCE DataWriter that will write the topic into the DDS GDS.
+ * @param ub                The ucdrBuffer structure used for serializing the topic.
+ * @param len               The size of the topic in bytes.
+ * @return A `request_id` that identifies the XRCE request made by the Entity.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ *  */
+UXRDLLAPI uint16_t uxr_prepare_output_stream(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId entity_id,
+        struct ucdrBuffer* ub,
+        uint32_t len);
+
+
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
+ *        The submessage will be sent when `uxr_flash_output_stream` or `uxr_run_session` function are called.
+ *        This function handles the buffer flush by means of  `uxrOnBuffersFull` callback.
+ *        As a result of the reception of this submessage, the Agent will write a topic into the DDS Global-Data-Space.
+ * @param session              A uxrSession structure previously initialized.
+ * @param stream_id            The output stream identifier where the WRITE_DATA submessage will be buffered.
+ * @param datawriter_id        The identifier of the XRCE DataWriter that will write the topic into the DDS GDS.
+ * @param ub                   The ucdrBuffer structure used for serializing the topic.
+ * @param data_size            The size of the topic in bytes.
+ * @param flush_callback       Callback that is call by the library when user should flush output buffers.
+ * @param flush_callback_args  Arguments passed to flush callback.
+ * @return A `request_id` that identifies the XRCE request made by the Entity.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ *  */
+
+UXRDLLAPI uint16_t uxr_prepare_output_stream_fragmented(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId datawriter_id,
+        ucdrBuffer* ub,
+        size_t data_size,
+        uxrOnBuffersFull flush_callback,
+        void* flush_callback_args);
+
+/** @}*/
 
 #ifdef __cplusplus
 }
 #endif // ifdef __cplusplus
 
-#endif //_UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
-/* === END microxrcedds/include/uxr/client/core/communication/communication.h === */
+#endif // UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
+/* === END microxrcedds/include/uxr/client/core/session/write_access.h === */
+/* === BEGIN microxrcedds/include/uxr/client/core/session/read_access.h === */
+// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+/**
+ * @file
+ */
+
+#ifndef UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
+#define UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+
+#define UXR_MAX_SAMPLES_UNLIMITED           0xFFFF
+#define UXR_MAX_ELAPSED_TIME_UNLIMITED      0x0000
+#define UXR_MAX_BYTES_PER_SECOND_UNLIMITED  0x0000
+
+/** \addtogroup read Read access
+ *  The Read Access is used by the Client to handle the read operation on the Agent. The declaration of these functions can be found in uxr/client/profile/session/read_access.h.
+ *  @{
+ */
+
+/** @struct uxrDeliveryControl
+ *  @brief A structure used for controlling the delivery of topic from the Agent to the Client.
+ *
+ *  @var uxrDeliveryControl::max_samples
+ *  The maximum number of topics that the Agent shall send to the Client.
+ *
+ *  @var uxrDeliveryControl::max_elapsed_time
+ *  The maximum amount of time in seconds that shall be spent by the Agent delivering the topic.
+ *
+ *  @var uxrDeliveryControl::max_bytes_per_second
+ *  The maximum transfer rate, in bytes per second, that the Agent shall use.
+ *
+ *  @var uxrDeliveryControl::min_pace_period
+ *  The minimum elapsed time, in milliseconds, between two topics deliveries.
+ */
+
+typedef struct uxrDeliveryControl
+{
+    uint16_t max_samples;
+    uint16_t max_elapsed_time;
+    uint16_t max_bytes_per_second;
+    uint16_t min_pace_period;
+
+} uxrDeliveryControl;
+
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE READ_DATA submessage.
+ *        The submessage will be sent when `uxr_flash_output_streams` or `uxr_run_session` function are called.
+ *        As a result of the reception of this submessage, the Agent will start to read a topic from the
+ *        DDS Global-Data-Space.
+ *        Each time the Agent reads a message from the topic, it will be sent to the Client according to the uxrDeliveryControl set
+ *        by the Client.
+ *        Each time the Client receives a topic message from the Agent, it will call the `on_topic_callback` set by the user.
+ *        This callback provides the `request_id` returned by this function in order to identify the topic.
+ *        In case of error at the Agent side, it will send an XRCE STATUS submessage with the error code.
+ *        When the STATUS submessage is received by the Client, it will call the `on_status_callback` with the
+ *        `request_id` returned by this function.
+ * @param session           A uxrSession structure previously initialized.
+ * @param stream_id         The output stream identifier where the READ_DATA submessage will be buffered.
+ * @param datareader_id     The identifier of the XRCE DataReader that will read the topics from the DDS GDS.
+ * @param data_stream_id    The identifier of the input stream through which the data will be received.
+ * @param delivery_control  An optional parameter that is used for controlling the delivery of topics from the Agent.
+ * @return A `request_id` that identifies the request made by the Client.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ */
+UXRDLLAPI uint16_t uxr_buffer_request_data(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId datareader_id,
+        uxrStreamId data_stream_id,
+        const uxrDeliveryControl* const delivery_control);
+
+/**
+ * @brief Buffers into the stream identified by `stream_id` an XRCE READ_DATA submessage.
+ *        The submessage will be sent when `uxr_flash_output_streams` or `uxr_run_session` function are called.
+ *        As a result of the reception of this submessage, the Agent will cancel any previous read operation.
+ * @param session           A uxrSession structure previously initialized.
+ * @param stream_id         The output stream identifier where the READ_DATA submessage will be buffered.
+ * @param datareader_id     The identifier of the XRCE DataReader that will read the topics from the DDS GDS.
+ * @return A `request_id` that identifies the request made by the Client.
+ *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
+ */
+UXRDLLAPI uint16_t uxr_buffer_cancel_data(
+        uxrSession* session,
+        uxrStreamId stream_id,
+        uxrObjectId datareader_id);
+
+/** @}*/
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif // UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
+/* === END microxrcedds/include/uxr/client/core/session/read_access.h === */
 /* === BEGIN microxrcedds/include/uxr/client/core/session/create_entities_ref.h === */
 // Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -4372,8 +4553,9 @@ UXRDLLAPI uint16_t uxr_buffer_create_replier_bin(
 
 #endif // UXR_CLIENT_CORE_SESSION_CREATE_ENTITIES_BIN_H_
 /* === END microxrcedds/include/uxr/client/core/session/create_entities_bin.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/session/read_access.h === */
-// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+
+/* === BEGIN microxrcedds/include/uxr/client/transport.h === */
+// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -4387,249 +4569,55 @@ UXRDLLAPI uint16_t uxr_buffer_create_replier_bin(
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * @file
- */
-
-#ifndef UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
-#define UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
+#ifndef UXR_CLIENT_TRANSPORT_H_
+#define UXR_CLIENT_TRANSPORT_H_
 
 
-#define UXR_MAX_SAMPLES_UNLIMITED           0xFFFF
-#define UXR_MAX_ELAPSED_TIME_UNLIMITED      0x0000
-#define UXR_MAX_BYTES_PER_SECOND_UNLIMITED  0x0000
+#ifdef UCLIENT_PROFILE_UDP
+#if defined(UCLIENT_PLATFORM_POSIX_NOPOLL)
+#include <uxr/client/profile/transport/ip/udp/udp_transport_posix_nopoll.h>
+#elif defined(UCLIENT_PLATFORM_POSIX)
+#include <uxr/client/profile/transport/ip/udp/udp_transport_posix.h>
+#elif defined(UCLIENT_PLATFORM_WINDOWS)
+#include <uxr/client/profile/transport/ip/udp/udp_transport_windows.h>
+#elif defined(UCLIENT_PLATFORM_FREERTOS_PLUS_TCP)
+#include <uxr/client/profile/transport/ip/udp/udp_transport_freertos_plus_tcp.h>
+#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
+#include <uxr/client/profile/transport/ip/udp/udp_transport_rtems_bsd_net.h>
+#endif // if defined(UCLIENT_EXTERNAL_UDP)
+#include <uxr/client/profile/transport/ip/udp/udp_transport.h>
+#endif //UCLIENT_PROFILE_UDP
 
-/** \addtogroup read Read access
- *  The Read Access is used by the Client to handle the read operation on the Agent. The declaration of these functions can be found in uxr/client/profile/session/read_access.h.
- *  @{
- */
+#ifdef UCLIENT_PROFILE_TCP
+#if defined(UCLIENT_PLATFORM_POSIX_NOPOLL)
+#include <uxr/client/profile/transport/ip/tcp/tcp_transport_posix_nopoll.h>
+#elif defined(UCLIENT_PLATFORM_POSIX)
+#include <uxr/client/profile/transport/ip/tcp/tcp_transport_posix.h>
+#elif defined(UCLIENT_PLATFORM_WINDOWS)
+#include <uxr/client/profile/transport/ip/tcp/tcp_transport_windows.h>
+#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
+#include <uxr/client/profile/transport/ip/tcp/tcp_transport_rtems_bsd_net.h>
+#endif // if defined(UCLIENT_EXTERNAL_TCP)
+#include <uxr/client/profile/transport/ip/tcp/tcp_transport.h>
+#endif //UCLIENT_PROFILE_TCP
 
-/** @struct uxrDeliveryControl
- *  @brief A structure used for controlling the delivery of topic from the Agent to the Client.
- *
- *  @var uxrDeliveryControl::max_samples
- *  The maximum number of topics that the Agent shall send to the Client.
- *
- *  @var uxrDeliveryControl::max_elapsed_time
- *  The maximum amount of time in seconds that shall be spent by the Agent delivering the topic.
- *
- *  @var uxrDeliveryControl::max_bytes_per_second
- *  The maximum transfer rate, in bytes per second, that the Agent shall use.
- *
- *  @var uxrDeliveryControl::min_pace_period
- *  The minimum elapsed time, in milliseconds, between two topics deliveries.
- */
+#ifdef UCLIENT_PROFILE_SERIAL
+#if defined(UCLIENT_PLATFORM_POSIX)
+#include <uxr/client/profile/transport/serial/serial_transport_posix.h>
+#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
+#include <uxr/client/profile/transport/serial/serial_transport_rtems_bsd_net.h>
+#endif // if defined(UCLIENT_EXTERNAL_SERIAL)
+#include <uxr/client/profile/transport/serial/serial_transport.h>
+#endif //UCLIENT_PROFILE_SERIAL
 
-typedef struct uxrDeliveryControl
-{
-    uint16_t max_samples;
-    uint16_t max_elapsed_time;
-    uint16_t max_bytes_per_second;
-    uint16_t min_pace_period;
+#ifdef UCLIENT_PROFILE_CAN
+#if defined(UCLIENT_PLATFORM_POSIX)
+#include <uxr/client/profile/transport/can/can_transport_posix.h>
+#endif // if defined(UCLIENT_EXTERNAL_CAN)
+#include <uxr/client/profile/transport/can/can_transport.h>
+#endif //UCLIENT_PROFILE_CAN
 
-} uxrDeliveryControl;
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE READ_DATA submessage.
- *        The submessage will be sent when `uxr_flash_output_streams` or `uxr_run_session` function are called.
- *        As a result of the reception of this submessage, the Agent will start to read a topic from the
- *        DDS Global-Data-Space.
- *        Each time the Agent reads a message from the topic, it will be sent to the Client according to the uxrDeliveryControl set
- *        by the Client.
- *        Each time the Client receives a topic message from the Agent, it will call the `on_topic_callback` set by the user.
- *        This callback provides the `request_id` returned by this function in order to identify the topic.
- *        In case of error at the Agent side, it will send an XRCE STATUS submessage with the error code.
- *        When the STATUS submessage is received by the Client, it will call the `on_status_callback` with the
- *        `request_id` returned by this function.
- * @param session           A uxrSession structure previously initialized.
- * @param stream_id         The output stream identifier where the READ_DATA submessage will be buffered.
- * @param datareader_id     The identifier of the XRCE DataReader that will read the topics from the DDS GDS.
- * @param data_stream_id    The identifier of the input stream through which the data will be received.
- * @param delivery_control  An optional parameter that is used for controlling the delivery of topics from the Agent.
- * @return A `request_id` that identifies the request made by the Client.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- */
-UXRDLLAPI uint16_t uxr_buffer_request_data(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId datareader_id,
-        uxrStreamId data_stream_id,
-        const uxrDeliveryControl* const delivery_control);
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE READ_DATA submessage.
- *        The submessage will be sent when `uxr_flash_output_streams` or `uxr_run_session` function are called.
- *        As a result of the reception of this submessage, the Agent will cancel any previous read operation.
- * @param session           A uxrSession structure previously initialized.
- * @param stream_id         The output stream identifier where the READ_DATA submessage will be buffered.
- * @param datareader_id     The identifier of the XRCE DataReader that will read the topics from the DDS GDS.
- * @return A `request_id` that identifies the request made by the Client.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- */
-UXRDLLAPI uint16_t uxr_buffer_cancel_data(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId datareader_id);
-
-/** @}*/
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif // UXR_CLIENT_CORE_SESSION_READ_ACCESS_H_
-/* === END microxrcedds/include/uxr/client/core/session/read_access.h === */
-/* === BEGIN microxrcedds/include/uxr/client/core/session/write_access.h === */
-// Copyright 2019 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-/**
- * @file
- */
-
-#ifndef UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
-#define UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
-
-#ifdef __cplusplus
-extern "C"
-{
-#endif // ifdef __cplusplus
-
-
-/** \addtogroup write Write access profile
- *  The Write Access is used by the Client to handle the write operation on the Agent. The declaration of these functions can be found in uxr/client/profile/session/write_access.h.
- *  @{
- */
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
- *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
- *
- * @param session       A uxrSession structure previously initialized.
- * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
- * @param requester_id  The identifier of the XRCE Requester that will write the request into the DDS GDS.
- * @param buffer        The pointer to the request data.
- * @param len           The length of the request data.
- * @return A `request_id` that identifies the XRCE request made by the Client.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- */
-uint16_t uxr_buffer_request(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId requester_id,
-        uint8_t* buffer,
-        size_t len);
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
- *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
- *
- * @param session       A uxrSession structure previously initialized.
- * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
- * @param replier_id    The identifier of the XRCE Replier that will write the reply into the DDS GDS.
- * @param sample_id     The `SampleIdentity` that identifies the request.
- *                      It will be read by the Requester to filter and identify the reply.
- * @param buffer        The pointer to the reply data.
- * @param len           The length of the reply data.
- * @return A `request_id` that identifies the XRCE request made by the Client.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- */
-uint16_t uxr_buffer_reply(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId replier_id,
-        SampleIdentity* sample_id,
-        uint8_t* buffer,
-        size_t len);
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
- *        As a consequence, an XRCE request is generated associated to the WRITE_DATA submessage.
- *
- * @param session       A uxrSession structure previously initialized.
- * @param stream_id     The output stream identifier where the WRITE_DATA submessage will be buffered.
- * @param datawriter_id The identifier of the XRCE Datawriter that will write the topic into the DDS GDS.
- * @param buffer        The pointer to the topic data.
- * @param len           The length of the topic data.
- * @return A `request_id` that identifies the XRCE request made by the Publisher.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- */
-uint16_t uxr_buffer_topic(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId datawriter_id,
-        uint8_t* buffer,
-        size_t len);
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
- *        The submessage will be sent when `uxr_flash_output_stream` or `uxr_run_session` function are called.
- *        As a result of the reception of this submessage, the Agent will write a topic into the DDS Global-Data-Space.
- * @param session           A uxrSession structure previously initialized.
- * @param stream_id         The output stream identifier where the WRITE_DATA submessage will be buffered.
- * @param entity_id         The identifier of the XRCE DataWriter that will write the topic into the DDS GDS.
- * @param ub                The ucdrBuffer structure used for serializing the topic.
- * @param len               The size of the topic in bytes.
- * @return A `request_id` that identifies the XRCE request made by the Entity.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- *  */
-UXRDLLAPI uint16_t uxr_prepare_output_stream(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId entity_id,
-        struct ucdrBuffer* ub,
-        uint32_t len);
-
-
-/**
- * @brief Buffers into the stream identified by `stream_id` an XRCE WRITE_DATA submessage.
- *        The submessage will be sent when `uxr_flash_output_stream` or `uxr_run_session` function are called.
- *        This function handles the buffer flush by means of  `uxrOnBuffersFull` callback.
- *        As a result of the reception of this submessage, the Agent will write a topic into the DDS Global-Data-Space.
- * @param session              A uxrSession structure previously initialized.
- * @param stream_id            The output stream identifier where the WRITE_DATA submessage will be buffered.
- * @param datawriter_id        The identifier of the XRCE DataWriter that will write the topic into the DDS GDS.
- * @param ub                   The ucdrBuffer structure used for serializing the topic.
- * @param data_size            The size of the topic in bytes.
- * @param flush_callback       Callback that is call by the library when user should flush output buffers.
- * @param flush_callback_args  Arguments passed to flush callback.
- * @return A `request_id` that identifies the XRCE request made by the Entity.
- *         This could be used in the `uxr_run_session_until_one_status` or `uxr_run_session_until_all_status` functions.
- *  */
-
-UXRDLLAPI uint16_t uxr_prepare_output_stream_fragmented(
-        uxrSession* session,
-        uxrStreamId stream_id,
-        uxrObjectId datawriter_id,
-        ucdrBuffer* ub,
-        size_t data_size,
-        uxrOnBuffersFull flush_callback,
-        void* flush_callback_args);
-
-/** @}*/
-
-#ifdef __cplusplus
-}
-#endif // ifdef __cplusplus
-
-#endif // UXR_CLIENT_CORE_SESSION_WRITE_ACCESS_H_
-/* === END microxrcedds/include/uxr/client/core/session/write_access.h === */
+#ifdef UCLIENT_PROFILE_CUSTOM_TRANSPORT
 /* === BEGIN microxrcedds/include/uxr/client/profile/transport/custom/custom_transport.h === */
 // Copyright 2020 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -4657,6 +4645,69 @@ extern "C"
 {
 #endif // ifdef __cplusplus
 
+/* === BEGIN microxrcedds/include/uxr/client/core/communication/communication.h === */
+// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef _UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
+#define _UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdbool.h>
+
+#ifdef UCLIENT_PROFILE_MULTITHREAD
+#endif // ifdef UCLIENT_PROFILE_MULTITHREAD
+
+typedef bool (* send_msg_func)(
+        void* instance,
+        const uint8_t* buf,
+        size_t len);
+typedef bool (* recv_msg_func)(
+        void* instance,
+        uint8_t** buf,
+        size_t* len,
+        int timeout);
+typedef uint8_t (* comm_error_func)(
+        void);
+
+typedef struct uxrCommunication
+{
+    void* instance;
+    send_msg_func send_msg;
+    recv_msg_func recv_msg;
+    comm_error_func comm_error;
+    uint16_t mtu;
+
+#ifdef UCLIENT_PROFILE_MULTITHREAD
+    uxrMutex mutex;
+#endif // ifdef UCLIENT_PROFILE_MULTITHREAD
+
+} uxrCommunication;
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif //_UXR_CLIENT_CORE_COMMUNICATION_COMMUNICATION_H_
+/* === END microxrcedds/include/uxr/client/core/communication/communication.h === */
 /* === BEGIN microxrcedds/include/uxr/client/profile/transport/stream_framing/stream_framing_protocol.h === */
 // Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -4838,6 +4889,50 @@ UXRDLLAPI bool uxr_close_custom_transport(
 
 #endif // UXR_CLIENT_CUSTOM_TRANSPORT_H_
 /* === END microxrcedds/include/uxr/client/profile/transport/custom/custom_transport.h === */
+#endif //UCLIENT_PROFILE_CUSTOM_TRANSPORT
+
+#endif // UXR_CLIENT_TRANSPORT_H_
+/* === END microxrcedds/include/uxr/client/transport.h === */
+
+#endif // _UXR_CLIENT_CLIENT_H_
+/* === END microxrcedds/include/uxr/client/client.h === */
+/* === BEGIN microxrcedds/include/uxr/client/util/time.h === */
+// Copyright 2017 Proyectos y Sistemas de Mantenimiento SL (eProsima).
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#ifndef UXR_CLIENT_UTIL_TIME_H_
+#define UXR_CLIENT_UTIL_TIME_H_
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif // ifdef __cplusplus
+
+#include <stdint.h>
+
+UXRDLLAPI int64_t uxr_millis(
+        void);
+
+UXRDLLAPI int64_t uxr_nanos(
+        void);
+
+#ifdef __cplusplus
+}
+#endif // ifdef __cplusplus
+
+#endif // UXR_CLIENT_UTIL_TIME_H_
+/* === END microxrcedds/include/uxr/client/util/time.h === */
 /* === BEGIN microxrcedds/include/uxr/client/util/ping.h === */
 // Copyright 2020 Proyectos y Sistemas de Mantenimiento SL (eProsima).
 //
@@ -4865,74 +4960,6 @@ extern "C"
 {
 #endif // ifdef __cplusplus
 
-/* === BEGIN microxrcedds/include/uxr/client/transport.h === */
-// Copyright 2018 Proyectos y Sistemas de Mantenimiento SL (eProsima).
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
-
-#ifndef UXR_CLIENT_TRANSPORT_H_
-#define UXR_CLIENT_TRANSPORT_H_
-
-
-#ifdef UCLIENT_PROFILE_UDP
-#if defined(UCLIENT_PLATFORM_POSIX_NOPOLL)
-#include <uxr/client/profile/transport/ip/udp/udp_transport_posix_nopoll.h>
-#elif defined(UCLIENT_PLATFORM_POSIX)
-#include <uxr/client/profile/transport/ip/udp/udp_transport_posix.h>
-#elif defined(UCLIENT_PLATFORM_WINDOWS)
-#include <uxr/client/profile/transport/ip/udp/udp_transport_windows.h>
-#elif defined(UCLIENT_PLATFORM_FREERTOS_PLUS_TCP)
-#include <uxr/client/profile/transport/ip/udp/udp_transport_freertos_plus_tcp.h>
-#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
-#include <uxr/client/profile/transport/ip/udp/udp_transport_rtems_bsd_net.h>
-#endif // if defined(UCLIENT_EXTERNAL_UDP)
-#include <uxr/client/profile/transport/ip/udp/udp_transport.h>
-#endif //UCLIENT_PROFILE_UDP
-
-#ifdef UCLIENT_PROFILE_TCP
-#if defined(UCLIENT_PLATFORM_POSIX_NOPOLL)
-#include <uxr/client/profile/transport/ip/tcp/tcp_transport_posix_nopoll.h>
-#elif defined(UCLIENT_PLATFORM_POSIX)
-#include <uxr/client/profile/transport/ip/tcp/tcp_transport_posix.h>
-#elif defined(UCLIENT_PLATFORM_WINDOWS)
-#include <uxr/client/profile/transport/ip/tcp/tcp_transport_windows.h>
-#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
-#include <uxr/client/profile/transport/ip/tcp/tcp_transport_rtems_bsd_net.h>
-#endif // if defined(UCLIENT_EXTERNAL_TCP)
-#include <uxr/client/profile/transport/ip/tcp/tcp_transport.h>
-#endif //UCLIENT_PROFILE_TCP
-
-#ifdef UCLIENT_PROFILE_SERIAL
-#if defined(UCLIENT_PLATFORM_POSIX)
-#include <uxr/client/profile/transport/serial/serial_transport_posix.h>
-#elif defined(UCLIENT_PLATFORM_RTEMS_BSD_NET)
-#include <uxr/client/profile/transport/serial/serial_transport_rtems_bsd_net.h>
-#endif // if defined(UCLIENT_EXTERNAL_SERIAL)
-#include <uxr/client/profile/transport/serial/serial_transport.h>
-#endif //UCLIENT_PROFILE_SERIAL
-
-#ifdef UCLIENT_PROFILE_CAN
-#if defined(UCLIENT_PLATFORM_POSIX)
-#include <uxr/client/profile/transport/can/can_transport_posix.h>
-#endif // if defined(UCLIENT_EXTERNAL_CAN)
-#include <uxr/client/profile/transport/can/can_transport.h>
-#endif //UCLIENT_PROFILE_CAN
-
-#ifdef UCLIENT_PROFILE_CUSTOM_TRANSPORT
-#endif //UCLIENT_PROFILE_CUSTOM_TRANSPORT
-
-#endif // UXR_CLIENT_TRANSPORT_H_
-/* === END microxrcedds/include/uxr/client/transport.h === */
 
 #include <stdbool.h>
 

@@ -161,6 +161,11 @@ def build():
     if missing:
         raise SystemExit("missing vendored sources: %s" % missing)
     am = Amalgam()
+    # Seed with the umbrella headers so the amalgam is a complete
+    # client.h/microcdr.h equivalent even for public headers no .c
+    # includes directly (e.g. client.h itself is include-only).
+    am.emit_header(UCR_INC / "ucdr" / "microcdr.h")
+    am.emit_header(UXR_INC / "uxr" / "client" / "client.h")
     # Pass 1: every public header reachable from the sources, depth-first.
     for src in SOURCES:
         with open(src, "r", encoding="utf-8") as f:
