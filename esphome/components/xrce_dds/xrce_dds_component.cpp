@@ -5,6 +5,7 @@
 
 #include "esp_timer.h"
 #include "esphome/core/application.h"
+#include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
 
 #include "../ros2/ros2_types.h"
@@ -40,6 +41,25 @@ XrceDdsComponent::~XrceDdsComponent() {
     vTaskDelete(this->worker_);
     this->worker_ = nullptr;
   }
+  this->free_image_buffers_();
+}
+
+void XrceDdsComponent::free_image_buffers_() {
+  ExternalRAMAllocator<uint8_t> ext_alloc;
+  if (this->img_buf_ != nullptr) {
+    ext_alloc.deallocate(this->img_buf_, XRCE_IMG_BUF_SIZE);
+    this->img_buf_ = nullptr;
+  }
+  if (this->img_box_storage_ != nullptr) {
+    ext_alloc.deallocate(this->img_box_storage_, sizeof(ImageItem));
+    this->img_box_storage_ = nullptr;
+  }
+  ExternalRAMAllocator<ImageItem> img_alloc;
+  if (this->img_stage_ != nullptr) {
+    img_alloc.deallocate(this->img_stage_, 1);
+    this->img_stage_ = nullptr;
+  }
+  this->images_available_ = false;
 }
 
 void XrceDdsComponent::set_transport_serial(uart::UARTComponent *parent) {
@@ -162,12 +182,33 @@ void XrceDdsComponent::setup() {
     return;
   }
   uxr_init_session(&this->session_, &this->custom_.comm, SESSION_KEY);
+  // Bulk image buffers on the heap, PSRAM-preferred (setup-time only, no
+  // churn after): mailbox + stage + stream as statics overflowed DRAM .bss.
+  // Without camera the mailbox constant is token-sized (see header), so
+  // non-camera boards pay ~44 kB of heap for the idle image stream only.
+  // Allocated here: the stream creation below borrows img_buf_ for the
+  // session lifetime.
+  ExternalRAMAllocator<uint8_t> ext_alloc;
+  this->img_buf_ = ext_alloc.allocate(XRCE_IMG_BUF_SIZE);
+  this->img_box_storage_ = ext_alloc.allocate(sizeof(ImageItem));
+  ExternalRAMAllocator<ImageItem> img_alloc;
+  this->img_stage_ = img_alloc.allocate(1);
+  if (this->img_buf_ != nullptr && this->img_box_storage_ != nullptr &&
+      this->img_stage_ != nullptr) {
+    this->images_available_ = true;
+  } else {
+    ESP_LOGE(TAG, "Image buffer allocation failed; image publishing disabled");
+  }
   this->out_stream_ = uxr_create_output_reliable_stream(&this->session_, this->out_buf_.data(),
                                                         this->out_buf_.size(), XRCE_STREAM_HISTORY);
   this->in_stream_ = uxr_create_input_reliable_stream(&this->session_, this->in_buf_.data(),
                                                       this->in_buf_.size(), XRCE_STREAM_HISTORY);
-  this->img_stream_ = uxr_create_output_reliable_stream(&this->session_, this->img_buf_.data(),
-                                                         this->img_buf_.size(), XRCE_IMG_HISTORY);
+  // No image stream without buffers: the publish_image wrapper rejects
+  // everything while !images_available_, so the worker never touches it.
+  if (this->images_available_) {
+    this->img_stream_ = uxr_create_output_reliable_stream(&this->session_, this->img_buf_,
+                                                          XRCE_IMG_BUF_SIZE, XRCE_IMG_HISTORY);
+  }
   this->out_be_stream_ = uxr_create_output_best_effort_stream(&this->session_, this->out_be_buf_.data(),
                                                               this->out_be_buf_.size());
   this->in_be_stream_ = uxr_create_input_best_effort_stream(&this->session_);
@@ -177,15 +218,21 @@ void XrceDdsComponent::setup() {
     ESP_LOGW(TAG, "max_packet_length %u ignored: vendored client MTU is %u",
              this->max_packet_length_, (unsigned) UXR_CONFIG_CUSTOM_TRANSPORT_MTU);
   }
-  // Worker handoff queues (static storage, no heap after setup).
+  // Worker handoff queues (static storage for small items, heap for the
+  // image mailbox; no heap churn after setup).
   this->out_queue_ = xQueueCreateStatic(XRCE_OUT_QUEUE_DEPTH, sizeof(OutboundItem),
                                         this->out_queue_storage_, &this->out_queue_ctrl_);
   this->ctrl_queue_ = xQueueCreateStatic(XRCE_CTRL_QUEUE_DEPTH, sizeof(CtrlItem),
                                          this->ctrl_queue_storage_, &this->ctrl_queue_ctrl_);
-  this->img_box_ =
-      xQueueCreateStatic(1, sizeof(ImageItem), this->img_box_storage_, &this->img_box_ctrl_);
-  if (this->out_queue_ == nullptr || this->ctrl_queue_ == nullptr || this->img_box_ == nullptr) {
+  this->img_box_ = nullptr;
+  if (this->images_available_) {
+    this->img_box_ = xQueueCreateStatic(1, sizeof(ImageItem), this->img_box_storage_,
+                                        &this->img_box_ctrl_);
+  }
+  if (this->out_queue_ == nullptr || this->ctrl_queue_ == nullptr ||
+      (this->images_available_ && this->img_box_ == nullptr)) {
     ESP_LOGE(TAG, "Worker queue creation failed");
+    this->free_image_buffers_();
     return;
   }
   // Start last: every member the worker touches is initialized above.
@@ -193,6 +240,7 @@ void XrceDdsComponent::setup() {
                               this, XRCE_WORKER_PRIO, &this->worker_, XRCE_WORKER_CORE) != pdPASS) {
     ESP_LOGE(TAG, "Worker task creation failed");
     this->worker_ = nullptr;
+    this->free_image_buffers_();
     return;
   }
   ros2::MiddlewareRegistry::register_middleware("xrce_dds", this);
@@ -854,7 +902,7 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     ESP_LOGE(TAG, "Topic name too long: %s", topic.c_str());
     return false;
   }
-  if (this->img_box_ == nullptr)
+  if (this->img_box_ == nullptr || !this->images_available_ || this->img_stage_ == nullptr)
     return false;
   if (!this->link_up_.load(std::memory_order_relaxed)) {
     this->img_drop_link_down_.fetch_add(1, std::memory_order_relaxed);
@@ -868,8 +916,8 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   }
   // 1-deep mailbox: the camera overwrites whatever the worker has not sent
   // yet. Overwrites are counted worker-side via the sequence gap.
-  // (Staged in a member: a 48 kB item would overflow the loop task stack.)
-  ImageItem &img = this->img_stage_;
+  // (Staged on the heap: a 48 kB item would overflow the loop task stack.)
+  ImageItem &img = *this->img_stage_;
   copy_topic_str(img.topic, topic);
   img.opts = make_queue_opts(opts);
   img.len = (uint32_t) len;

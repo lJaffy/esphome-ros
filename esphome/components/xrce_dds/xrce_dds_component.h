@@ -56,7 +56,14 @@ constexpr int XRCE_WORKER_PRIO = 5;
 constexpr size_t XRCE_WORKER_STACK = 12288;
 constexpr size_t XRCE_OUT_QUEUE_DEPTH = 8;
 constexpr size_t XRCE_CTRL_QUEUE_DEPTH = 16;
+// Image mailbox cap: full-size frames on camera builds, token size
+// elsewhere (no camera can produce frames, so the mailbox stays empty).
+// Non-camera boards save ~98 kB of RAM this way (mailbox + stage below).
+#ifdef USE_CAMERA
 constexpr size_t XRCE_IMG_MAILBOX_MAX = 49152;  // 48 kB frame cap (> 44 kB stream)
+#else
+constexpr size_t XRCE_IMG_MAILBOX_MAX = 64;
+#endif
 constexpr uint8_t XRCE_CTRL_SUBSCRIBE = 1;
 constexpr size_t XRCE_SUB_STAGING_MAX = 16;
 
@@ -187,6 +194,7 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   bool publish_image_on_worker_(const char *topic, const uint8_t *jpeg, size_t len,
                                 const QueueOpts &opts);
   uint32_t now_ms_() const;
+  void free_image_buffers_();  // setup-failure + destructor path only
   void drop_link_();
   void reset_img_stream_();
   bool pump_timed_(int timeout_ms);
@@ -264,7 +272,11 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> in_buf_{};
   std::array<uint8_t, XRCE_STREAM_BUF_SIZE> out_be_buf_{};
-  std::array<uint8_t, XRCE_IMG_BUF_SIZE> img_buf_{};
+  // Bulk image buffers are heap-allocated in setup() (PSRAM-preferred via
+  // ExternalRAMAllocator): mailbox + stage + stream would overflow DRAM .bss
+  // as statics (~142 kB). Null until setup() succeeds.
+  uint8_t *img_buf_{nullptr};
+  bool images_available_{false};
   // Single-threaded main loop: one shared scratch sample, no per-message heap.
   uint8_t sample_buf_[sizeof(ros2::JointTrajectoryMsg)]{0};
   // Cumulative transport counters (never reset; integrity signal for HIL).
@@ -314,7 +326,9 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   StaticQueue_t img_box_ctrl_{};
   uint8_t out_queue_storage_[XRCE_OUT_QUEUE_DEPTH * sizeof(OutboundItem)]{};
   uint8_t ctrl_queue_storage_[XRCE_CTRL_QUEUE_DEPTH * sizeof(CtrlItem)]{};
-  uint8_t img_box_storage_[sizeof(ImageItem)]{};
+  // Mailbox queue storage is heap-allocated with the buffers below (an
+  // ImageItem is ~49 kB: far too big for .bss alongside the rest).
+  uint8_t *img_box_storage_{nullptr};
   // SampleCallback staging: loop thread writes slot i once before enqueueing
   // its control item; the worker moves it into readers_[] exactly once.
   // Queue send/receive barriers make the handoff safe without a mutex.
@@ -322,9 +336,10 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   size_t num_sub_staging_{0};  // loop-only
   uint32_t img_seq_{0};        // loop-only mailbox sequence
   uint32_t img_mailbox_seen_{0};  // worker-only last handled sequence
-  // Loop-only mailbox staging (~48 kB: far too big for the loop task stack,
-  // so it lives here; the worker only ever sees the queue copy).
-  ImageItem img_stage_{};
+  // Loop-only mailbox staging (heap, like the queue storage: a 48 kB item
+  // would overflow both the loop task stack and DRAM .bss). The worker only
+  // ever sees the queue copy.
+  ImageItem *img_stage_{nullptr};
   // Table snapshots for dump_config() (loop thread): tables are
   // worker-exclusive, so the worker refreshes these after each mutation.
   std::atomic<uint32_t> snap_readers_{0};
