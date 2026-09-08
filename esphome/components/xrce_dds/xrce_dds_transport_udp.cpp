@@ -3,8 +3,6 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -39,11 +37,6 @@ bool XrceUdpTransport::open(const char *ip, uint16_t port) {
   int rcv = UDP_RCV_BUF;
   if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcv, sizeof(rcv)) < 0)
     ESP_LOGW(TAG, "UDP SO_RCVBUF %d failed: %d", rcv, errno);
-#ifdef IPTOS_LOWDELAY
-  int tos = IPTOS_LOWDELAY;
-  if (setsockopt(fd, IPPROTO_IP, IP_TOS, &tos, sizeof(tos)) < 0)
-    ESP_LOGV(TAG, "UDP IP_TOS low-delay failed: %d", errno);
-#endif
   struct sockaddr_in addr {};
   addr.sin_family = AF_INET;
   addr.sin_port = htons(port);
