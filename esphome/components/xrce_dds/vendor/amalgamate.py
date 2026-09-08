@@ -131,18 +131,19 @@ def is_public(path):
 # only correct when the platform (ESP-IDF) or a false `#ifdef` provides it.
 # A dropped line is proven dead. Anything else is a loud SystemExit so new
 # upstream headers get a conscious decision instead of a broken build.
-# - shared_memory_internal.h: DROPPED. Included unconditionally by
-#   session.c/create_entities_{bin,xml}.c, but zero symbols from it are
-#   referenced anywhere in the tree and UCLIENT_PROFILE_SHARED_MEMORY is
-#   off in the baked config. (Kept verbatim it would break the build: the
-#   amalgam lives at the component root where the relative path dies.)
+# - shared_memory_internal.h was briefly DROPPED here, but that was wrong:
+#   it provides the no-op UXR_*_SHARED_MEMORY macros used unconditionally
+#   by session.c/create_entities_*.c/write_access.c when the profile is
+#   off. It is now vendored (src/c/profile/shared_memory/, header only —
+#   shared_memory.c stays excluded). Lesson: verify "zero references" with
+#   a case-sensitive search for the exact macro names.
 # - FreeRTOS.h, semphr.h, task.h: KEPT. Guarded platform headers
 #   (multithread.h: PLATFORM_NAME_FREERTOS, time.c: FREERTOS_PLUS_TCP),
 #   both guards false in our config; IDF would provide them if true.
 # Basename keying: these names are distinctive upstream; if upstream ever
 # reuses one for a real vendored header, the freshness test still pins the
 # exact output and the build will tell us.
-DROP_BASENAMES = {"shared_memory_internal.h"}
+DROP_BASENAMES = set()
 KEEP_BASENAMES = {"FreeRTOS.h", "semphr.h", "task.h"}
 
 

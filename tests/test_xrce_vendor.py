@@ -225,7 +225,13 @@ def test_amalgam_covers_all_sources():
                 if name.startswith(prefix):
                     assert not (root / name).is_file(), \
                         "vendored header not inlined: %s" % s
-    # The proven-dead shared_memory include must be dropped, never kept:
-    # no #include may reference it, and the drop comment records why.
-    assert not re.search(r'#\s*include[^"\n]*shared_memory', body)
-    assert "dropped (not vendored, zero references): shared_memory_internal.h" in body
+    # The shared_memory internal header (vendored header-only for its
+    # no-op macros; shared_memory.c stays excluded) is inlined once.
+    assert body.count(
+        "/* === BEGIN microxrcedds/src/c/profile/shared_memory/shared_memory_internal.h === */"
+    ) == 1
+    for macro in ("UXR_CLEAN_SHARED_MEMORY", "UXR_HANDLE_SHARED_MEMORY",
+                  "UXR_ADD_SHARED_MEMORY_ENTITY_XML",
+                  "UXR_ADD_SHARED_MEMORY_ENTITY_BIN",
+                  "UXR_PREPARE_SHARED_MEMORY"):
+        assert macro in body, macro

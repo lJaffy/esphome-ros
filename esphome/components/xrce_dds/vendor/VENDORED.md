@@ -37,9 +37,14 @@ ESP-IDF and Arduino. Our code includes only `"xrce_dds_vendor.h"`.
 - `microxrcedds/` — Micro-XRCE-DDS-Client **v3.0.2**, profile =
   custom-transport + stream framing (serial) only.
   - 30 `.c`: core session/streams/serialization, `util/time.c`,
-    `util/ping.c`, `core/log/log.c`, `profile/transport/custom/custom_transport.c`,
-    `profile/transport/stream_framing/stream_framing_protocol.c`,
-    plus co-located `*_internal.h` headers those `.c` files include.
+  `util/ping.c`, `core/log/log.c`, `profile/transport/custom/custom_transport.c`,
+  `profile/transport/stream_framing/stream_framing_protocol.c`,
+  plus co-located `*_internal.h` headers those `.c` files include.
+- `profile/shared_memory/shared_memory_internal.h` — header ONLY
+  (fetched verbatim from upstream v3.0.2; `shared_memory.c` stays
+  excluded). It provides the no-op `UXR_*_SHARED_MEMORY` macros used
+  unconditionally by session/create_entities/write_access sources when
+  the profile is off; without it the amalgam does not compile.
   - Headers: `core/`, `util/`, custom, stream-framing, multithread stub
     (no-ops with multithread off), top-level `client.h`/`transport.h`/
     `defines.h`/`visibility.h`.
@@ -75,9 +80,9 @@ byte-deterministically from the tree below
   via the disabled multithreading profile). Include guards make the
   duplicate emission safe.
 Two named exceptions, both explicit in `amalgamate.py`: `DROP_BASENAMES`
-(`shared_memory_internal.h` — included unconditionally but zero
-references, profile off; kept verbatim it would not resolve from the
-component root) is dropped with a comment, `KEEP_BASENAMES`
+(currently empty — `shared_memory_internal.h` was briefly dropped here
+until the build proved its no-op macros are required; it is now vendored
+above) drops proven-dead includes with a comment, `KEEP_BASENAMES`
 (`FreeRTOS.h`, `semphr.h`, `task.h` — guarded platform headers provided
 by IDF when their guards are true) is kept; any other unvendored include
 fails the script loudly so new upstream headers get a conscious decision.

@@ -43,27 +43,27 @@ enum class LinkState : uint8_t {
   LINK_UP,
 };
 
-struct ReaderEntry {
-  std::string topic;
-  const ros2::TypeDef *type{nullptr};
-  ros2::SampleCallback cb;
-  bool reliable{true};
-  uxrObjectId topic_id{};
-  uxrObjectId reader_id{};
-  bool created{false};
-};
-
-struct WriterEntry {
-  std::string topic;
-  const ros2::TypeDef *type{nullptr};
-  bool reliable{true};
-  uxrObjectId topic_id{};
-  uxrObjectId writer_id{};
-  bool created{false};
-};
-
 class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
  public:
+  struct ReaderEntry {
+    std::string topic;
+    const ros2::TypeDef *type{nullptr};
+    ros2::SampleCallback cb;
+    bool reliable{true};
+    uxrObjectId topic_id{};
+    uxrObjectId reader_id{};
+    bool created{false};
+  };
+
+  struct WriterEntry {
+    std::string topic;
+    const ros2::TypeDef *type{nullptr};
+    bool reliable{true};
+    uxrObjectId topic_id{};
+    uxrObjectId writer_id{};
+    bool created{false};
+  };
+
   XrceDdsComponent() = default;
   ~XrceDdsComponent() override;
 
