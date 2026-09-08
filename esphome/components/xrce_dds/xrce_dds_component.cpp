@@ -239,7 +239,8 @@ void build_topic_xml(char *out, size_t cap, const char *topic, const char *type)
 void build_endpoint_xml(char *out, size_t cap, const char *kind, const char *topic,
                         const char *type) {
   snprintf(out, cap,
-           "<dds><%s><topic><kind>NO_KEY</kind><name>%s</name><dataType>%s</dataType></topic></%s>",
+           "<dds><%s><topic><kind>NO_KEY</kind><name>%s</name><dataType>%s</dataType></topic></%s></"
+           "dds>",
            kind, topic, type, kind);
 }
 
@@ -255,7 +256,7 @@ void build_endpoint_qos_xml(char *out, size_t cap, const char *kind, const char 
   }
   snprintf(out, cap,
            "<dds><%s><topic><kind>NO_KEY</kind><name>%s</name><dataType>%s</dataType></topic>"
-           "<qos><reliability><kind>BEST_EFFORT</kind></reliability></qos></%s>",
+           "<qos><reliability><kind>BEST_EFFORT</kind></reliability></qos></%s></dds>",
            kind, topic, type, kind);
 }
 
