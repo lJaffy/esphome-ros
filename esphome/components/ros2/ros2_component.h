@@ -390,6 +390,11 @@ class Ros2Component : public Component {
   StaticQueue_t inbound_ctrl_{};
   uint8_t inbound_storage_[ROS2_INBOUND_DEPTH * sizeof(InboundItem)]{};
   std::atomic<uint32_t> inbound_drop_{0};
+  // Main-loop cadence (Phase 2 exit signal): worst gap between loop()
+  // passes + passes slower than 100 ms. Loop-only.
+  uint32_t loop_last_ms_{0};
+  uint32_t loop_max_gap_ms_{0};
+  uint32_t loop_slow_passes_{0};
 };
 
 }  // namespace ros2

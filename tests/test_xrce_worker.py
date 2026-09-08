@@ -147,6 +147,17 @@ def worker_body():
     return m.group(1)
 
 
+def test_dump_reports_queue_depths():
+    assert "uxQueueMessagesWaiting" in XCPP
+    assert "Queues out/ctrl/mbox" in XCPP
+
+
+def test_loop_cadence_tracked():
+    assert "loop_max_gap_ms_" in RH
+    assert "loop_slow_passes_" in RH
+    assert "Loop max gap" in RCPP
+
+
 def test_frozen_contracts_survived():
     # Middleware interface + Track-1 constants untouched by the split.
     # Middleware interface + Track-1 constants untouched by the split.

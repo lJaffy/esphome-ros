@@ -73,6 +73,25 @@ Scope: `xrce_dds_component.h/cpp` (worker owns all `uxr_*`); `ros2_component.cpp
 - Rejected: `std::vector`/`std::queue+mutex` (fragmentation, `_M_realloc_insert` flash cost); use `StaticVector` + `xQueueCreate` (single bounded alloc at `setup`).
 - Exit: no 1s stall on agent-down / image burst, TWDT clean, loop p99 measured, `dump_config()` shows drops/queue depths.
 
+Status (2026-09-08, validated on Seeed XIAO S3 camera @ 640x480, 1-3 fps over XRCE-DDS/UDP):
+
+- Worker owns all `uxr_*` (connect, entity create, pump, publish, dispatch
+  decode); `loop()` only enqueues. No 1 s stall observed; `api: Buffer full`
+  seen once at boot, traced to DEBUG log traffic over the api socket, not
+  loop starvation (power_save/modem-sleep tuning deferred by operator).
+- TWDT clean across multi-minute runs; `PROBE fail 0` over 50+ frames at
+  1 fps, sustained 3 fps without link loss.
+- Loop cadence tracked in `Ros2Component` (`Loop max gap`, slow passes
+  >100 ms in `dump_config`); worker stack HWM reported.
+- `dump_config()` shows cumulative drops (TX fail, image
+  link/no-writer/prepare/encode/mailbox-overwrite, inbound) plus live
+  out/ctrl/mbox queue depths.
+- Wire efficiency (Track 1, kept orthogonal to the worker): vendored MTU
+  512->1472, image stream 64 kB/history-4 -> 44 kB/history-32 (~1408 B
+  slots, no IP fragmentation), bulk image buffers on PSRAM heap with
+  `USE_CAMERA` gating. Confirm latency p50 ~250 ms, max <1 s at 1 fps;
+  single-frame drops (never link drops) under congestion.
+
 ## Phase 3 — Generic service framework (no domain service yet)
 Scope: `ros2_middleware.h` (`create_requester/replier`, timeout/cancel), `xrce_dds_codec` service codegen pattern, `ros2/__init__.py` `services:` schema mirroring sub/pub style, tests.
 - One spike only: `std_srvs/Trigger` round-trip + timeout + agent-flap. Proves DDS-RPC `Requester`/`Replier`, `8/8` budget impact, reply fragmentation, static service slots (cap 4–8 concurrent, `StaticVector`).

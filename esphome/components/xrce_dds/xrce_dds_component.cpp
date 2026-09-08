@@ -380,6 +380,15 @@ void XrceDdsComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Worker stack HWM: %u bytes free",
                   (unsigned) (uxTaskGetStackHighWaterMark(this->worker_) * sizeof(StackType_t)));
   }
+  // Queue depths are point-in-time (thread-safe read); drops above are
+  // cumulative. Persistent depth here means the worker cannot keep up.
+  ESP_LOGCONFIG(TAG, "  Queues out/ctrl/mbox: %u/%u/%u pending",
+                (unsigned) (this->out_queue_ != nullptr ? uxQueueMessagesWaiting(this->out_queue_)
+                                                        : 0),
+                (unsigned) (this->ctrl_queue_ != nullptr ? uxQueueMessagesWaiting(this->ctrl_queue_)
+                                                         : 0),
+                (unsigned) (this->img_box_ != nullptr ? uxQueueMessagesWaiting(this->img_box_)
+                                                      : 0));
 }
 
 void XrceDdsComponent::drop_link_() {

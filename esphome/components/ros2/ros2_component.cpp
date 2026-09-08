@@ -225,9 +225,18 @@ namespace esphome
 
     void Ros2Component::loop()
     {
+      const uint32_t now = App.get_loop_component_start_time();
+      if (this->loop_last_ms_ != 0)
+      {
+        const uint32_t gap = now - this->loop_last_ms_;
+        if (gap > this->loop_max_gap_ms_)
+          this->loop_max_gap_ms_ = gap;
+        if (gap > 100)
+          this->loop_slow_passes_++;
+      }
+      this->loop_last_ms_ = now;
       this->drain_inbound_();
       this->try_subscribe_();
-      const uint32_t now = App.get_loop_component_start_time();
       this->stop_stale_diff_drive_(now);
       for (size_t i = 0; i < this->num_pubs_; i++)
         this->poll_publication_(this->pubs_[i]);
@@ -246,6 +255,8 @@ namespace esphome
                     (unsigned)this->num_pubs_);
       ESP_LOGCONFIG(TAG, "  Inbound drops: %u",
                     (unsigned) this->inbound_drop_.load(std::memory_order_relaxed));
+      ESP_LOGCONFIG(TAG, "  Loop max gap: %ums, slow passes (>100ms): %u",
+                    (unsigned) this->loop_max_gap_ms_, (unsigned) this->loop_slow_passes_);
       for (size_t i = 0; i < this->num_pubs_; i++)
       {
         if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE)
