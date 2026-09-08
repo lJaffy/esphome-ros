@@ -900,8 +900,20 @@ bool XrceDdsComponent::publish_on_worker_(const char *topic, const ros2::TypeDef
     this->tx_fail_++;
     return false;
   }
-  if (!this->codec_.serialize(&ub, type, sample, len) || ub.error) {
-    ESP_LOGW(TAG, "XCDR encode failed for %s", topic);
+  // TEMP DIAGNOSTIC (encode-failure triage; remove after): snapshot the
+  // prepared buffer so one flash distinguishes slot shortage (prep_rem <
+  // size) from a size/serialize mismatch (serialize stalls at ub.offset).
+  size_t prep_len = ucdr_buffer_length(&ub);
+  size_t prep_rem = ucdr_buffer_remaining(&ub);
+  bool prep_err = ub.error;
+  bool ser_ok = this->codec_.serialize(&ub, type, sample, len);
+  if (!ser_ok || ub.error) {
+    ESP_LOGW(TAG,
+             "XCDR encode failed for %s (type=%s len=%u size=%u prep_len=%u prep_rem=%u prep_err=%d "
+             "ser_ok=%d off=%u rem=%u err=%d reliable=%d)",
+             topic, type->name, (unsigned) len, (unsigned) size, (unsigned) prep_len,
+             (unsigned) prep_rem, (int) prep_err, (int) ser_ok, (unsigned) ub.offset,
+             (unsigned) ucdr_buffer_remaining(&ub), (int) ub.error, (int) w->reliable);
     this->tx_fail_++;
     return false;
   }
