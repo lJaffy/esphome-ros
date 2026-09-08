@@ -48,8 +48,9 @@ ESP-IDF and Arduino. Our code includes only `"xrce_dds_vendor.h"`.
   - Headers: `core/`, `util/`, custom, stream-framing, multithread stub
     (no-ops with multithread off), top-level `client.h`/`transport.h`/
     `defines.h`/`visibility.h`.
-  - `include/uxr/client/config.h` is generated (baked from CMake defaults:
-    1 in/out × best-effort/reliable stream, attempts 10, interval 1000 ms,
+  - `include/uxr/client/config.h` is generated (baked from CMake defaults
+    with one tweak: 2 output reliable streams — `out_stream_` + `img_stream_`
+    — 1 input reliable, 1 in/out × best-effort, attempts 10, interval 1000 ms,
     heartbeat 100 ms, custom MTU 512, `UCLIENT_TWEAK_XRCE_WRITE_LIMIT` on).
 - `microcdr/` — micro-CDR **v2.0.2**, little-endian (`config.h` baked with
   `UCDR_MACHINE_ENDIANNESS = UCDR_LITTLE_ENDIANNESS`).
