@@ -14,6 +14,14 @@ struct TypeDef {
   size_t size;
 };
 
+struct ServiceDef {
+  const char *name;
+  const char *request_type_name;
+  const char *reply_type_name;
+  size_t request_size;
+  size_t reply_size;
+};
+
 struct MiddlewareOptions {
   const char *key = nullptr;
   const char *value = nullptr;

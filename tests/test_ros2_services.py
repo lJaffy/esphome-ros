@@ -9,13 +9,15 @@ from pathlib import Path
 
 import pytest
 
-COMP_INIT = Path(__file__).parent.parent / "esphome" / "components" / "ros2" / "__init__.py"
+COMP_INIT = Path(__file__).parent.parent / "esphome" / \
+    "components" / "ros2" / "__init__.py"
 
 esphome = pytest.importorskip("esphome")
 
 
 def load_ros2_init():
-    spec = importlib.util.spec_from_file_location("ros2_svc_under_test", COMP_INIT)
+    spec = importlib.util.spec_from_file_location(
+        "ros2_svc_under_test", COMP_INIT)
     mod = importlib.util.module_from_spec(spec)
     sys.modules["ros2_svc_under_test"] = mod
     spec.loader.exec_module(mod)
@@ -37,7 +39,7 @@ def _svc(ros2, **kw):
 def test_valid_trigger_client(ros2):
     cfg = _svc(ros2)
     assert cfg["service"] == "/toggle_led"
-    assert cfg["timeout"] == 5000
+    assert cfg["timeout"].total_milliseconds == 5000
 
 
 def test_unknown_service_type_rejected(ros2):
