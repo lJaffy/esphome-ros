@@ -179,6 +179,24 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uint32_t tx_ok_{0};
   uint32_t tx_fail_{0};
   uint32_t rx_count_{0};
+  // TEMP PROBE (tx-timing diagnosis; remove after): per-datagram send stats,
+  // frame serialize cost, and ACK turnaround. Reported throttled, never
+  // per-packet.
+  uint32_t probe_dgrams_{0};
+  uint32_t probe_bytes_{0};
+  uint64_t probe_send_us_{0};
+  uint32_t probe_send_max_us_{0};
+  uint32_t probe_eagain_{0};
+  uint32_t probe_send_err_{0};
+  uint32_t probe_rx_dgrams_{0};
+  uint32_t probe_rx_bytes_{0};
+  uint32_t probe_ser_us_{0};
+  uint32_t probe_ser_max_us_{0};
+  uint32_t probe_last_frame_ms_{0};
+  uint32_t probe_confirm_lat_ms_{0};
+  uint32_t probe_confirm_max_ms_{0};
+  uint32_t probe_frames_{0};
+  uint32_t probe_last_log_ms_{0};
 };
 
 }  // namespace xrce_dds

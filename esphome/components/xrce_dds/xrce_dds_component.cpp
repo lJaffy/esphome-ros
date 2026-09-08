@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cstring>
 
+#include "esp_timer.h"
 #include "esphome/core/application.h"
 #include "esphome/core/log.h"
 
@@ -89,15 +90,33 @@ bool image_flush(uxrSession *session, void *args) {
 }  // namespace
 
 int XrceDdsComponent::transport_write(const uint8_t *buf, size_t len) {
-  if (this->transport_ == TransportType::TRANSPORT_UDP)
-    return this->udp_.send(buf, len);
-  return this->serial_.send(buf, len);
+  // TEMP PROBE: time the non-blocking send (syscall enqueue only, not wire).
+  const int64_t t0 = esp_timer_get_time();
+  int n = (this->transport_ == TransportType::TRANSPORT_UDP) ? this->udp_.send(buf, len)
+                                                             : this->serial_.send(buf, len);
+  const uint32_t dt = (uint32_t) (esp_timer_get_time() - t0);
+  this->probe_dgrams_++;
+  this->probe_send_us_ += dt;
+  if (dt > this->probe_send_max_us_)
+    this->probe_send_max_us_ = dt;
+  if (n < 0) {
+    this->probe_send_err_++;
+  } else if (n == 0) {
+    this->probe_eagain_++;
+  } else {
+    this->probe_bytes_ += (uint32_t) n;
+  }
+  return n;
 }
 
 int XrceDdsComponent::transport_read(uint8_t *buf, size_t len) {
-  if (this->transport_ == TransportType::TRANSPORT_UDP)
-    return this->udp_.recv(buf, len);
-  return this->serial_.recv(buf, len);
+  int n = (this->transport_ == TransportType::TRANSPORT_UDP) ? this->udp_.recv(buf, len)
+                                                             : this->serial_.recv(buf, len);
+  if (n > 0) {
+    this->probe_rx_dgrams_++;
+    this->probe_rx_bytes_ += (uint32_t) n;
+  }
+  return n;
 }
 
 bool XrceDdsComponent::pump_once() { return uxr_run_session_timeout(&this->session_, 0); }
@@ -153,8 +172,43 @@ void XrceDdsComponent::loop() {
   // HIL follow-up: periodic time-sync ping when now - last_rx_ is large.
   if (this->pump_once()) {
     this->last_confirm_ = now;
+    // TEMP PROBE: end-to-end ACK turnaround for the last queued frame.
+    if (this->probe_last_frame_ms_ != 0) {
+      const uint32_t lat = now - this->probe_last_frame_ms_;
+      this->probe_confirm_lat_ms_ = lat;
+      if (lat > this->probe_confirm_max_ms_)
+        this->probe_confirm_max_ms_ = lat;
+      this->probe_last_frame_ms_ = 0;
+    }
   } else if (now - this->last_confirm_ > this->keepalive_timeout_ms_) {
     this->drop_link_();
+  }
+  // TEMP PROBE: throttled summary (every 10 frames or 5 s).
+  if (this->probe_frames_ >= 10 || now - this->probe_last_log_ms_ >= 5000) {
+    const uint32_t avg_send =
+        this->probe_dgrams_ != 0 ? (uint32_t) (this->probe_send_us_ / this->probe_dgrams_) : 0;
+    ESP_LOGI(TAG,
+             "PROBE tx: %u dgrams %u B (rx %u dgrams %u B) send avg/max %u/%u us eagain %u err %u | "
+             "ser %u/%u us frames %u confirm lat %u/%u ms ok %u fail %u",
+             (unsigned) this->probe_dgrams_, (unsigned) this->probe_bytes_,
+             (unsigned) this->probe_rx_dgrams_, (unsigned) this->probe_rx_bytes_, (unsigned) avg_send,
+             (unsigned) this->probe_send_max_us_, (unsigned) this->probe_eagain_,
+             (unsigned) this->probe_send_err_, (unsigned) this->probe_ser_us_,
+             (unsigned) this->probe_ser_max_us_, (unsigned) this->probe_frames_,
+             (unsigned) this->probe_confirm_lat_ms_, (unsigned) this->probe_confirm_max_ms_,
+             (unsigned) this->tx_ok_, (unsigned) this->tx_fail_);
+    this->probe_dgrams_ = 0;
+    this->probe_bytes_ = 0;
+    this->probe_send_us_ = 0;
+    this->probe_send_max_us_ = 0;
+    this->probe_eagain_ = 0;
+    this->probe_send_err_ = 0;
+    this->probe_rx_dgrams_ = 0;
+    this->probe_rx_bytes_ = 0;
+    this->probe_ser_us_ = 0;
+    this->probe_ser_max_us_ = 0;
+    this->probe_frames_ = 0;
+    this->probe_last_log_ms_ = now;
   }
 }
 
@@ -645,10 +699,17 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     this->tx_fail_++;
     return false;
   }
-  if (!ucdr_serialize_int32_t(&ub, sec) || !ucdr_serialize_uint32_t(&ub, nsec) ||
-      !ucdr_serialize_string(&ub, frame_id) || !ucdr_serialize_string(&ub, "jpeg") ||
-      !ucdr_serialize_uint32_t(&ub, (uint32_t) len) ||
-      !ucdr_serialize_array_uint8_t(&ub, jpeg, len) || ub.error) {
+  // TEMP PROBE: serialize (memcpy/format) cost per frame.
+  const int64_t ser_t0 = esp_timer_get_time();
+  const bool ser_ok = ucdr_serialize_int32_t(&ub, sec) && ucdr_serialize_uint32_t(&ub, nsec) &&
+                      ucdr_serialize_string(&ub, frame_id) && ucdr_serialize_string(&ub, "jpeg") &&
+                      ucdr_serialize_uint32_t(&ub, (uint32_t) len) &&
+                      ucdr_serialize_array_uint8_t(&ub, jpeg, len) && !ub.error;
+  const uint32_t ser_dt = (uint32_t) (esp_timer_get_time() - ser_t0);
+  this->probe_ser_us_ += ser_dt;
+  if (ser_dt > this->probe_ser_max_us_)
+    this->probe_ser_max_us_ = ser_dt;
+  if (!ser_ok) {
     ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
     this->tx_fail_++;
     // The failed frame left partial fragments queued: drop the link so the
@@ -658,6 +719,8 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     return false;
   }
   this->tx_ok_++;
+  this->probe_frames_++;
+  this->probe_last_frame_ms_ = App.get_loop_component_start_time();
   return true;
 }
 
