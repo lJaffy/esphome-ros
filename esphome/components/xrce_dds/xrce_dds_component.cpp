@@ -651,12 +651,10 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
       !ucdr_serialize_array_uint8_t(&ub, jpeg, len) || ub.error) {
     ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
     this->tx_fail_++;
-    // Discard the poisoned partial frame so the next publish starts from
-    // a clean history; otherwise unacked fragments pin the stream and
-    // every later pump reads "unconfirmed".
-    if (uxrOutputReliableStream *s =
-            uxr_get_output_reliable_stream(&this->session_.streams, this->img_stream_.index))
-      uxr_reset_output_reliable_stream(s);
+    // The failed frame left partial fragments queued: drop the link so the
+    // reconnect resets stream history, otherwise unacked fragments pin it
+    // and every later pump reads "unconfirmed".
+    this->drop_link_();
     return false;
   }
   this->tx_ok_++;
