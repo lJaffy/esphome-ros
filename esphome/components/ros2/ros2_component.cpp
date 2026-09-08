@@ -18,6 +18,10 @@ namespace esphome
 
     void Ros2Component::setup()
     {
+      this->inbound_ = xQueueCreateStatic(ROS2_INBOUND_DEPTH, sizeof(InboundItem),
+                                          this->inbound_storage_, &this->inbound_ctrl_);
+      if (this->inbound_ == nullptr)
+        ESP_LOGE(TAG, "Inbound queue creation failed");
       this->try_subscribe_();
       this->register_camera_listener_();
     }
@@ -149,29 +153,9 @@ namespace esphome
             sub.topic, sub.type,
             [this, i](const void *sample, size_t len)
             {
-              (void)len;
-              const Subscription &s = this->subs_[i];
-              const void *p = sample;
-              if (s.kind == SubKind::JOINT_MULTI)
-              {
-                this->dispatch_joints_(s, p);
-              }
-              else if (s.kind == SubKind::SWITCH_SINGLE)
-              {
-                this->dispatch_scalar_switch_(s, p);
-              }
-              else if (s.kind == SubKind::SERVO_SINGLE)
-              {
-                this->dispatch_scalar_servo_(s, p);
-              }
-              else if (s.kind == SubKind::LIGHT_SINGLE)
-              {
-                this->dispatch_light_(s, p);
-              }
-              else if (s.kind == SubKind::DIFF_DRIVE)
-              {
-                this->dispatch_diff_drive_(s, p);
-              }
+              // May run on a middleware worker thread: only enqueue, never
+              // touch entities here. loop() replays via dispatch_sub_().
+              this->enqueue_inbound_(i, sample, len);
             },
             &opts);
         ESP_LOGI(TAG, "Subscribed: %s (%s)", sub.topic.c_str(), sub.type->name);
@@ -179,8 +163,69 @@ namespace esphome
       this->subscribed_ = true;
     }
 
+    void Ros2Component::enqueue_inbound_(size_t sub_idx, const void *sample, size_t len)
+    {
+      if (this->inbound_ == nullptr || sample == nullptr || sub_idx >= ROS2_MAX_SUBSCRIPTIONS)
+        return;
+      if (len > sizeof(InboundItem::data))
+        return;
+      InboundItem it;
+      it.sub_idx = (uint8_t) sub_idx;
+      it.len = (uint16_t) len;
+      memcpy(it.data, sample, len);
+      if (xQueueSend(this->inbound_, &it, 0) != pdTRUE)
+      {
+        // Freshest wins: evict the oldest queued sample for the new one.
+        InboundItem drop;
+        xQueueReceive(this->inbound_, &drop, 0);
+        xQueueSend(this->inbound_, &it, 0);
+        this->inbound_drop_.fetch_add(1, std::memory_order_relaxed);
+      }
+    }
+
+    void Ros2Component::drain_inbound_()
+    {
+      if (this->inbound_ == nullptr)
+        return;
+      InboundItem it;
+      while (xQueueReceive(this->inbound_, &it, 0) == pdTRUE)
+      {
+        if ((size_t) it.sub_idx >= this->num_subs_)
+          continue;
+        this->dispatch_sub_((size_t) it.sub_idx, it.data);
+      }
+    }
+
+    void Ros2Component::dispatch_sub_(size_t sub_idx, const void *sample)
+    {
+      // Loop thread only: entity writes are safe here.
+      const Subscription &s = this->subs_[sub_idx];
+      const void *p = sample;
+      if (s.kind == SubKind::JOINT_MULTI)
+      {
+        this->dispatch_joints_(s, p);
+      }
+      else if (s.kind == SubKind::SWITCH_SINGLE)
+      {
+        this->dispatch_scalar_switch_(s, p);
+      }
+      else if (s.kind == SubKind::SERVO_SINGLE)
+      {
+        this->dispatch_scalar_servo_(s, p);
+      }
+      else if (s.kind == SubKind::LIGHT_SINGLE)
+      {
+        this->dispatch_light_(s, p);
+      }
+      else if (s.kind == SubKind::DIFF_DRIVE)
+      {
+        this->dispatch_diff_drive_(s, p);
+      }
+    }
+
     void Ros2Component::loop()
     {
+      this->drain_inbound_();
       this->try_subscribe_();
       const uint32_t now = App.get_loop_component_start_time();
       this->stop_stale_diff_drive_(now);
@@ -199,6 +244,8 @@ namespace esphome
                     this->mw_ != nullptr ? "found" : "MISSING");
       ESP_LOGCONFIG(TAG, "  Subscriptions: %u, Publications: %u", (unsigned)this->num_subs_,
                     (unsigned)this->num_pubs_);
+      ESP_LOGCONFIG(TAG, "  Inbound drops: %u",
+                    (unsigned) this->inbound_drop_.load(std::memory_order_relaxed));
       for (size_t i = 0; i < this->num_pubs_; i++)
       {
         if (this->pubs_[i].kind == PubKind::IMAGE_SINGLE)

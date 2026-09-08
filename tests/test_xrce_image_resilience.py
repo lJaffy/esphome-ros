@@ -66,10 +66,12 @@ def test_track1_img_stream_small_slots_deep_history():
     assert "1408" in H or "1412" in H
 
 
-def test_track1_socket_buffers_and_tos():
+def test_track1_socket_stays_lwip_compatible():
     udp_cpp = (COMP / "xrce_dds_transport_udp.cpp").read_text()
-    assert "SO_SNDBUF" in udp_cpp
-    assert "SO_RCVBUF" in udp_cpp
+    # lwIP rejects SO_SNDBUF/SO_RCVBUF (ENOPROTOOPT) and lacks netinet/ip.h:
+    # no setsockopt tuning, non-blocking contract preserved.
+    assert "setsockopt" not in udp_cpp
+    assert "netinet/ip.h" not in udp_cpp
     assert "MSG_DONTWAIT" in udp_cpp  # non-blocking contract preserved
     assert "EAGAIN" in udp_cpp
 

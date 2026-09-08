@@ -1,9 +1,13 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <string>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
 
 #include "esphome/core/component.h"
 #ifdef __has_include
@@ -111,6 +115,22 @@ enum class LightField : uint8_t {
   RGB,
   BRIGHTNESS,
 };
+
+// Inbound dispatch queue (Phase 2): subscription callbacks may fire on a
+// middleware worker thread, so they only memcpy the decoded sample here.
+// loop() drains the queue and runs the dispatch_* bodies on the loop thread
+// where entity writes are safe. Depth 8, drop-oldest + counter.
+constexpr size_t ROS2_INBOUND_DEPTH = 8;
+constexpr size_t ROS2_INBOUND_SAMPLE_MAX = sizeof(JointTrajectoryMsg);
+
+struct InboundItem {
+  uint8_t sub_idx{0};
+  uint16_t len{0};
+  uint8_t data[ROS2_INBOUND_SAMPLE_MAX]{0};
+};
+
+static_assert(sizeof(JointStateMsg) <= ROS2_INBOUND_SAMPLE_MAX, "inbound payload too small");
+static_assert(sizeof(TFMessageMsg) <= ROS2_INBOUND_SAMPLE_MAX, "inbound payload too small");
 
 struct JointTarget {
   char joint_name[ROS2_NAME_LEN]{0};
@@ -335,6 +355,11 @@ class Ros2Component : public Component {
                              float qz, float qw);
   // Zero stale wheel commands (cmd_vel timeout). Runs on loop(), not hot path.
   void stop_stale_diff_drive_(uint32_t now);
+  // Inbound queue edge: safe to call from any thread (middleware callbacks).
+  void enqueue_inbound_(size_t sub_idx, const void *sample, size_t len);
+  // Loop thread only: replay queued samples through the dispatch_* bodies.
+  void drain_inbound_();
+  void dispatch_sub_(size_t sub_idx, const void *sample);
 
   std::string middleware_name_{"mqtt"};
   Ros2Middleware *mw_{nullptr};
@@ -359,6 +384,12 @@ class Ros2Component : public Component {
   };
   std::array<ServoLevel, ROS2_MAX_TARGETS * ROS2_MAX_SUBSCRIPTIONS> levels_{};
   size_t num_levels_{0};
+  // Inbound dispatch queue (see InboundItem): created in setup(), drained
+  // in loop(). Callbacks only enqueue; dispatch runs on the loop thread.
+  QueueHandle_t inbound_{nullptr};
+  StaticQueue_t inbound_ctrl_{};
+  uint8_t inbound_storage_[ROS2_INBOUND_DEPTH * sizeof(InboundItem)]{};
+  std::atomic<uint32_t> inbound_drop_{0};
 };
 
 }  // namespace ros2

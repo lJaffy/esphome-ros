@@ -1,9 +1,15 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <utility>
+
+#include "freertos/FreeRTOS.h"
+#include "freertos/queue.h"
+#include "freertos/task.h"
 
 #include "xrce_dds_vendor.h"
 
@@ -39,6 +45,62 @@ constexpr size_t XRCE_IMG_BUF_SIZE = 45056;
 constexpr uint16_t XRCE_IMG_HISTORY = 32;
 constexpr size_t XRCE_TOPIC_NAME_LEN = 96;
 constexpr size_t XRCE_XML_BUF_LEN = 384;
+
+// Worker task topology (Phase 2, hard-coded): one task on the APP core owns
+// every uxr_* call, stream/table/buffer state, and all counters. The loop()
+// thread only enqueues queue items below and reads atomics. Queues carry
+// memcpy payloads (never pointers into caller buffers) so no mutex is needed
+// on the data path; FreeRTOS queue ops provide the memory barriers.
+constexpr int XRCE_WORKER_CORE = 1;  // APP core, alongside Arduino/IDF loopTask
+constexpr int XRCE_WORKER_PRIO = 5;
+constexpr size_t XRCE_WORKER_STACK = 12288;
+constexpr size_t XRCE_OUT_QUEUE_DEPTH = 8;
+constexpr size_t XRCE_CTRL_QUEUE_DEPTH = 16;
+constexpr size_t XRCE_IMG_MAILBOX_MAX = 49152;  // 48 kB frame cap (> 44 kB stream)
+constexpr uint8_t XRCE_CTRL_SUBSCRIBE = 1;
+constexpr size_t XRCE_SUB_STAGING_MAX = 16;
+
+// Queue-safe copy of the middleware options (frame_id materialized: the
+// live MiddlewareOptions only borrows its caller's char buffer).
+struct QueueOpts {
+  bool reliable{true};
+  bool qos_explicit{false};
+  bool use_b64{true};
+  int32_t stamp_sec{0};
+  uint32_t stamp_nsec{0};
+  char frame_id[ros2::ROS2_FRAME_ID_LEN]{0};
+};
+
+// Largest MCU sample bounds every queue payload (JointTrajectoryMsg ~1.1 kB).
+constexpr size_t XRCE_SAMPLE_MAX = sizeof(ros2::JointTrajectoryMsg);
+static_assert(sizeof(ros2::JointStateMsg) <= XRCE_SAMPLE_MAX, "sample payload too small");
+static_assert(sizeof(ros2::TFMessageMsg) <= XRCE_SAMPLE_MAX, "sample payload too small");
+static_assert(sizeof(ros2::ImuMsg) <= XRCE_SAMPLE_MAX, "sample payload too small");
+static_assert(sizeof(ros2::OdometryMsg) <= XRCE_SAMPLE_MAX, "sample payload too small");
+
+struct OutboundItem {
+  char topic[XRCE_TOPIC_NAME_LEN]{0};
+  const ros2::TypeDef *type{nullptr};
+  QueueOpts opts;
+  uint16_t len{0};
+  uint8_t data[XRCE_SAMPLE_MAX]{0};
+};
+
+struct CtrlItem {
+  uint8_t op{0};  // XRCE_CTRL_SUBSCRIBE
+  char topic[XRCE_TOPIC_NAME_LEN]{0};
+  const ros2::TypeDef *type{nullptr};
+  QueueOpts opts;
+  uint8_t slot{0};
+};
+
+struct ImageItem {
+  char topic[XRCE_TOPIC_NAME_LEN]{0};
+  QueueOpts opts;
+  uint32_t len{0};
+  uint32_t seq{0};
+  uint8_t jpeg[XRCE_IMG_MAILBOX_MAX]{0};
+};
 
 enum class TransportType : uint8_t {
   TRANSPORT_UDP,
@@ -98,15 +160,33 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
                const ros2::MiddlewareOptions *opts = nullptr) override;
   bool publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
                      const ros2::MiddlewareOptions *opts = nullptr) override;
-  bool connected() const override { return this->link_ == LinkState::LINK_UP; }
+  bool connected() const override { return this->link_up_.load(std::memory_order_relaxed); }
   const char *name() const override { return "xrce_dds"; }
 
   // Called from the C transport callbacks (args back-pointer), so public.
+  // Worker-only: invoked via session pump/prepare on the worker task.
   int transport_write(const uint8_t *buf, size_t len);
   int transport_read(uint8_t *buf, size_t len);
   bool pump_once();
 
  protected:
+  // Worker entry + per-iteration handlers. Everything below runs on the
+  // worker task; the loop() thread never calls these directly.
+  static void worker_trampoline_(void *arg);
+  void worker_loop_();
+  void handle_ctrl_(const CtrlItem &c);
+  void handle_outbound_(const OutboundItem &o);
+  void handle_image_(const ImageItem &img);
+  void snapshot_tables_();  // worker-only: refresh dump snapshots
+  // Former subscribe/publish/publish_image bodies, now worker-only. The
+  // public overrides are thin enqueue wrappers (loop-safe, non-blocking).
+  bool subscribe_on_worker_(const char *topic, const ros2::TypeDef *type, uint8_t slot,
+                            const QueueOpts &opts);
+  bool publish_on_worker_(const char *topic, const ros2::TypeDef *type, const void *sample, size_t len,
+                          const QueueOpts &opts);
+  bool publish_image_on_worker_(const char *topic, const uint8_t *jpeg, size_t len,
+                                const QueueOpts &opts);
+  uint32_t now_ms_() const;
   void drop_link_();
   void reset_img_stream_();
   bool pump_timed_(int timeout_ms);
@@ -116,11 +196,15 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   bool create_writer_(WriterEntry &entry);
   ReaderEntry *find_reader_(const std::string &topic);
   WriterEntry *find_writer_(const std::string &topic);
+  // Hot-path variants: compare without constructing a std::string per call.
+  ReaderEntry *find_reader_cstr_(const char *topic);
+  WriterEntry *find_writer_cstr_(const char *topic);
   ReaderEntry *find_reader_by_id_(uxrObjectId id);
   // Distinct DDS topics across readers+writers. Each new topic mints a
   // topic entity on the agent, bounded by max_topics_.
   size_t count_topics_();
   bool topic_allowed_(const std::string &topic);
+  bool topic_allowed_cstr_(const char *topic);
   void on_data_(uxrObjectId reader_id, ucdrBuffer *ub, uint16_t length);
   static void topic_trampoline_(uxrSession *session, uxrObjectId object_id, uint16_t request_id,
                                 uxrStreamId stream_id, ucdrBuffer *ub, uint16_t length, void *args);
@@ -138,9 +222,12 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uint8_t max_datareaders_{8};
 
   LinkState link_{LinkState::LINK_DOWN};
+  // Loop-visible snapshot of link_ (worker writes, loop wrappers read).
+  std::atomic<bool> link_up_{false};
   uint32_t next_attempt_{0};
   uint32_t last_pump_{0};
-  uint32_t last_rx_{0};
+  // Inbound-data clock, read by dump_config() on the loop thread.
+  std::atomic<uint32_t> last_rx_{0};
   // Last time the session reported fully-confirmed output. Separate from
   // last_rx_ (inbound data) so publish-only nodes still see agent ACKs.
   uint32_t last_confirm_{0};
@@ -181,16 +268,20 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   // Single-threaded main loop: one shared scratch sample, no per-message heap.
   uint8_t sample_buf_[sizeof(ros2::JointTrajectoryMsg)]{0};
   // Cumulative transport counters (never reset; integrity signal for HIL).
-  uint32_t tx_ok_{0};
-  uint32_t tx_fail_{0};
-  uint32_t rx_count_{0};
+  // Atomic: incremented on the worker, read by dump_config()/wrappers on loop.
+  std::atomic<uint32_t> tx_ok_{0};
+  std::atomic<uint32_t> tx_fail_{0};
+  std::atomic<uint32_t> rx_count_{0};
   // Granular image drop reasons (subset of TX; tx_ok_/tx_fail_ kept for parsers).
-  uint32_t img_ok_{0};
-  uint32_t img_drop_link_down_{0};
-  uint32_t img_drop_no_writer_{0};
-  uint32_t img_drop_prepare_{0};
-  uint32_t img_drop_encode_{0};
+  std::atomic<uint32_t> img_ok_{0};
+  std::atomic<uint32_t> img_drop_link_down_{0};
+  std::atomic<uint32_t> img_drop_no_writer_{0};
+  std::atomic<uint32_t> img_drop_prepare_{0};
+  std::atomic<uint32_t> img_drop_encode_{0};
+  // Camera overwrote the 1-deep mailbox before the worker sent the frame.
+  std::atomic<uint32_t> img_drop_mailbox_overwrite_{0};
   // Consecutive mid-frame encode failures; falls back to drop_link_ at threshold.
+  // Worker-only (written + read on the worker task).
   uint8_t img_encode_fails_{0};
   // TEMP PROBE (tx-timing diagnosis; remove after): per-datagram send stats,
   // frame serialize cost, and ACK turnaround. Reported throttled, never
@@ -210,6 +301,35 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
   uint32_t probe_confirm_max_ms_{0};
   uint32_t probe_frames_{0};
   uint32_t probe_last_log_ms_{0};
+
+  // --- Worker handoff (Phase 2) -------------------------------------------
+  // Queues are created in setup(); the task starts at the end of setup().
+  // subscribe/publish/publish_image only touch these + atomics above.
+  TaskHandle_t worker_{nullptr};
+  QueueHandle_t out_queue_{nullptr};
+  QueueHandle_t ctrl_queue_{nullptr};
+  QueueHandle_t img_box_{nullptr};
+  StaticQueue_t out_queue_ctrl_{};
+  StaticQueue_t ctrl_queue_ctrl_{};
+  StaticQueue_t img_box_ctrl_{};
+  uint8_t out_queue_storage_[XRCE_OUT_QUEUE_DEPTH * sizeof(OutboundItem)]{};
+  uint8_t ctrl_queue_storage_[XRCE_CTRL_QUEUE_DEPTH * sizeof(CtrlItem)]{};
+  uint8_t img_box_storage_[sizeof(ImageItem)]{};
+  // SampleCallback staging: loop thread writes slot i once before enqueueing
+  // its control item; the worker moves it into readers_[] exactly once.
+  // Queue send/receive barriers make the handoff safe without a mutex.
+  std::array<ros2::SampleCallback, XRCE_SUB_STAGING_MAX> sub_staging_{};
+  size_t num_sub_staging_{0};  // loop-only
+  uint32_t img_seq_{0};        // loop-only mailbox sequence
+  uint32_t img_mailbox_seen_{0};  // worker-only last handled sequence
+  // Loop-only mailbox staging (~48 kB: far too big for the loop task stack,
+  // so it lives here; the worker only ever sees the queue copy).
+  ImageItem img_stage_{};
+  // Table snapshots for dump_config() (loop thread): tables are
+  // worker-exclusive, so the worker refreshes these after each mutation.
+  std::atomic<uint32_t> snap_readers_{0};
+  std::atomic<uint32_t> snap_writers_{0};
+  std::atomic<uint32_t> snap_topics_{0};
 };
 
 }  // namespace xrce_dds

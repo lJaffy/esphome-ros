@@ -35,6 +35,11 @@ XrceDdsComponent::~XrceDdsComponent() {
   // No uxr_delete_session here: it blocks on agent round-trips and the
   // destructor runs on the restart path. The agent reaps dead sessions via
   // its liveliness timeout. The UDP socket closes via XrceUdpTransport RAII.
+  // Stop the worker so it can never touch a half-destroyed *this.
+  if (this->worker_ != nullptr) {
+    vTaskDelete(this->worker_);
+    this->worker_ = nullptr;
+  }
 }
 
 void XrceDdsComponent::set_transport_serial(uart::UARTComponent *parent) {
@@ -142,7 +147,8 @@ void XrceDdsComponent::reset_img_stream_() {
     uxr_reset_output_reliable_stream(s);
   // Pinned fragments previously forced pump_once() to read "unconfirmed";
   // re-anchor confirmation so the keepalive gate does not false-trip.
-  this->last_confirm_ = App.get_loop_component_start_time();
+  // Worker-only.
+  this->last_confirm_ = this->now_ms_();
 }
 
 // --- Lifecycle --------------------------------------------------------------
@@ -171,68 +177,122 @@ void XrceDdsComponent::setup() {
     ESP_LOGW(TAG, "max_packet_length %u ignored: vendored client MTU is %u",
              this->max_packet_length_, (unsigned) UXR_CONFIG_CUSTOM_TRANSPORT_MTU);
   }
+  // Worker handoff queues (static storage, no heap after setup).
+  this->out_queue_ = xQueueCreateStatic(XRCE_OUT_QUEUE_DEPTH, sizeof(OutboundItem),
+                                        this->out_queue_storage_, &this->out_queue_ctrl_);
+  this->ctrl_queue_ = xQueueCreateStatic(XRCE_CTRL_QUEUE_DEPTH, sizeof(CtrlItem),
+                                         this->ctrl_queue_storage_, &this->ctrl_queue_ctrl_);
+  this->img_box_ =
+      xQueueCreateStatic(1, sizeof(ImageItem), this->img_box_storage_, &this->img_box_ctrl_);
+  if (this->out_queue_ == nullptr || this->ctrl_queue_ == nullptr || this->img_box_ == nullptr) {
+    ESP_LOGE(TAG, "Worker queue creation failed");
+    return;
+  }
+  // Start last: every member the worker touches is initialized above.
+  if (xTaskCreatePinnedToCore(&XrceDdsComponent::worker_trampoline_, "xrce_dds", XRCE_WORKER_STACK,
+                              this, XRCE_WORKER_PRIO, &this->worker_, XRCE_WORKER_CORE) != pdPASS) {
+    ESP_LOGE(TAG, "Worker task creation failed");
+    this->worker_ = nullptr;
+    return;
+  }
   ros2::MiddlewareRegistry::register_middleware("xrce_dds", this);
   ESP_LOGCONFIG(TAG, "XRCE-DDS middleware registered (agent=%s:%u, domain=%u)",
                 this->agent_address_.c_str(), this->agent_port_, this->domain_id_);
 }
 
 void XrceDdsComponent::loop() {
-  if (!this->session_init_)
-    return;
-  const uint32_t now = App.get_loop_component_start_time();
-  if (this->link_ == LinkState::LINK_DOWN) {
-    if (now >= this->next_attempt_)
-      this->try_connect_();
-    return;
-  }
-  if (now - this->last_pump_ < this->process_interval_ms_)
-    return;
-  this->last_pump_ = now;
-  // uxr_run_session_timeout(0) reports output confirmation, not transport
-  // health: a just-queued image reads "unconfirmed" until agent ACKs
-  // arrive. Only drop after a full keepalive window without confirmation.
-  // KNOWN GAP: run health only catches transport errors. A silently dead
-  // UDP agent (blackhole, no ICMP) looks healthy until traffic fails.
-  // HIL follow-up: periodic time-sync ping when now - last_rx_ is large.
-  if (this->pump_once()) {
-    this->last_confirm_ = now;
-    // TEMP PROBE: end-to-end ACK turnaround for the last queued frame.
-    if (this->probe_last_frame_ms_ != 0) {
-      const uint32_t lat = now - this->probe_last_frame_ms_;
-      this->probe_confirm_lat_ms_ = lat;
-      if (lat > this->probe_confirm_max_ms_)
-        this->probe_confirm_max_ms_ = lat;
-      this->probe_last_frame_ms_ = 0;
+  // Intentionally empty: the worker task owns pump/connect/publish/dispatch.
+  // Inbound samples reach ros2 via its own queue (see Ros2Component::loop).
+}
+
+void XrceDdsComponent::worker_trampoline_(void *arg) {
+  static_cast<XrceDdsComponent *>(arg)->worker_loop_();
+  vTaskDelete(nullptr);
+}
+
+uint32_t XrceDdsComponent::now_ms_() const {
+  // Boot-epoch ms like App.get_loop_component_start_time(), but callable
+  // from the worker task (the App accessor is loop-cached).
+  return (uint32_t) (esp_timer_get_time() / 1000LL);
+}
+
+void XrceDdsComponent::worker_loop_() {
+  for (;;) {
+    // Control plane first (reader registrations unblock entity creation).
+    CtrlItem c;
+    while (xQueueReceive(this->ctrl_queue_, &c, 0) == pdTRUE)
+      this->handle_ctrl_(c);
+    // Data plane: drain all pending small samples, then the latest image.
+    OutboundItem o;
+    while (xQueueReceive(this->out_queue_, &o, 0) == pdTRUE)
+      this->handle_outbound_(o);
+    ImageItem img;
+    if (xQueueReceive(this->img_box_, &img, 0) == pdTRUE)
+      this->handle_image_(img);
+    // Session pump / connect state machine (moved from loop() verbatim,
+    // with worker-epoch now). uxr_run_session_timeout(0) reports output
+    // confirmation, not transport health: a just-queued image reads
+    // "unconfirmed" until agent ACKs arrive. Only drop after a full
+    // keepalive window without confirmation.
+    // KNOWN GAP: run health only catches transport errors. A silently dead
+    // UDP agent (blackhole, no ICMP) looks healthy until traffic fails.
+    // HIL follow-up: periodic time-sync ping when now - last_rx_ is large.
+    if (!this->session_init_) {
+      vTaskDelay(pdMS_TO_TICKS(this->process_interval_ms_));
+      continue;
     }
-  } else if (now - this->last_confirm_ > this->keepalive_timeout_ms_) {
-    this->drop_link_();
-  }
-  // TEMP PROBE: throttled summary (every 10 frames or 5 s).
-  if (this->probe_frames_ >= 10 || now - this->probe_last_log_ms_ >= 5000) {
-    const uint32_t avg_send =
-        this->probe_dgrams_ != 0 ? (uint32_t) (this->probe_send_us_ / this->probe_dgrams_) : 0;
-    ESP_LOGI(TAG,
-             "PROBE tx: %u dgrams %u B (rx %u dgrams %u B) send avg/max %u/%u us eagain %u err %u | "
-             "ser %u/%u us frames %u confirm lat %u/%u ms ok %u fail %u",
-             (unsigned) this->probe_dgrams_, (unsigned) this->probe_bytes_,
-             (unsigned) this->probe_rx_dgrams_, (unsigned) this->probe_rx_bytes_, (unsigned) avg_send,
-             (unsigned) this->probe_send_max_us_, (unsigned) this->probe_eagain_,
-             (unsigned) this->probe_send_err_, (unsigned) this->probe_ser_us_,
-             (unsigned) this->probe_ser_max_us_, (unsigned) this->probe_frames_,
-             (unsigned) this->probe_confirm_lat_ms_, (unsigned) this->probe_confirm_max_ms_,
-             (unsigned) this->tx_ok_, (unsigned) this->tx_fail_);
-    this->probe_dgrams_ = 0;
-    this->probe_bytes_ = 0;
-    this->probe_send_us_ = 0;
-    this->probe_send_max_us_ = 0;
-    this->probe_eagain_ = 0;
-    this->probe_send_err_ = 0;
-    this->probe_rx_dgrams_ = 0;
-    this->probe_rx_bytes_ = 0;
-    this->probe_ser_us_ = 0;
-    this->probe_ser_max_us_ = 0;
-    this->probe_frames_ = 0;
-    this->probe_last_log_ms_ = now;
+    const uint32_t now = this->now_ms_();
+    if (this->link_ == LinkState::LINK_DOWN) {
+      if (now >= this->next_attempt_)
+        this->try_connect_();
+    } else {
+      if (now - this->last_pump_ >= this->process_interval_ms_) {
+        this->last_pump_ = now;
+        if (this->pump_once()) {
+          this->last_confirm_ = now;
+          // TEMP PROBE: end-to-end ACK turnaround for the last queued frame.
+          if (this->probe_last_frame_ms_ != 0) {
+            const uint32_t lat = now - this->probe_last_frame_ms_;
+            this->probe_confirm_lat_ms_ = lat;
+            if (lat > this->probe_confirm_max_ms_)
+              this->probe_confirm_max_ms_ = lat;
+            this->probe_last_frame_ms_ = 0;
+          }
+        } else if (now - this->last_confirm_ > this->keepalive_timeout_ms_) {
+          this->drop_link_();
+        }
+      }
+      // TEMP PROBE: throttled summary (every 10 frames or 5 s).
+      if (this->probe_frames_ >= 10 || now - this->probe_last_log_ms_ >= 5000) {
+        const uint32_t avg_send =
+            this->probe_dgrams_ != 0 ? (uint32_t) (this->probe_send_us_ / this->probe_dgrams_) : 0;
+        ESP_LOGI(TAG,
+                 "PROBE tx: %u dgrams %u B (rx %u dgrams %u B) send avg/max %u/%u us eagain %u err "
+                 "%u | "
+                 "ser %u/%u us frames %u confirm lat %u/%u ms ok %u fail %u",
+                 (unsigned) this->probe_dgrams_, (unsigned) this->probe_bytes_,
+                 (unsigned) this->probe_rx_dgrams_, (unsigned) this->probe_rx_bytes_,
+                 (unsigned) avg_send, (unsigned) this->probe_send_max_us_,
+                 (unsigned) this->probe_eagain_, (unsigned) this->probe_send_err_,
+                 (unsigned) this->probe_ser_us_, (unsigned) this->probe_ser_max_us_,
+                 (unsigned) this->probe_frames_, (unsigned) this->probe_confirm_lat_ms_,
+                 (unsigned) this->probe_confirm_max_ms_, (unsigned) this->tx_ok_.load(),
+                 (unsigned) this->tx_fail_.load());
+        this->probe_dgrams_ = 0;
+        this->probe_bytes_ = 0;
+        this->probe_send_us_ = 0;
+        this->probe_send_max_us_ = 0;
+        this->probe_eagain_ = 0;
+        this->probe_send_err_ = 0;
+        this->probe_rx_dgrams_ = 0;
+        this->probe_rx_bytes_ = 0;
+        this->probe_ser_us_ = 0;
+        this->probe_ser_max_us_ = 0;
+        this->probe_frames_ = 0;
+        this->probe_last_log_ms_ = now;
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(this->process_interval_ms_));
   }
 }
 
@@ -242,30 +302,37 @@ void XrceDdsComponent::dump_config() {
                 this->agent_port_, this->domain_id_, this->client_name_.c_str());
   ESP_LOGCONFIG(TAG, "  Transport: %s",
                 this->transport_ == TransportType::TRANSPORT_UDP ? "udp" : "serial");
-  ESP_LOGCONFIG(TAG, "  Readers: %u/%u, writers: %u/%u", (unsigned) this->num_readers_,
-                (unsigned) this->max_datareaders_, (unsigned) this->num_writers_,
+  ESP_LOGCONFIG(TAG, "  Readers: %u/%u, writers: %u/%u", (unsigned) this->snap_readers_.load(),
+                (unsigned) this->max_datareaders_, (unsigned) this->snap_writers_.load(),
                 (unsigned) this->max_datawriters_);
-  ESP_LOGCONFIG(TAG, "  Topics: %u/%u", (unsigned) this->count_topics_(),
+  ESP_LOGCONFIG(TAG, "  Topics: %u/%u", (unsigned) this->snap_topics_.load(),
                 (unsigned) this->max_topics_);
   const uint32_t now = App.get_loop_component_start_time();
-  ESP_LOGCONFIG(TAG, "  TX ok: %u, TX fail: %u, RX: %u, last RX age: %ums", (unsigned) this->tx_ok_,
-                (unsigned) this->tx_fail_, (unsigned) this->rx_count_,
-                (unsigned) (this->last_rx_ == 0 ? 0 : now - this->last_rx_));
-  ESP_LOGCONFIG(TAG, "  Images ok: %u drop(link/no-writer/prepare/encode): %u/%u/%u/%u",
-                (unsigned) this->img_ok_, (unsigned) this->img_drop_link_down_,
-                (unsigned) this->img_drop_no_writer_, (unsigned) this->img_drop_prepare_,
-                (unsigned) this->img_drop_encode_);
+  const uint32_t last_rx = this->last_rx_.load(std::memory_order_relaxed);
+  ESP_LOGCONFIG(TAG, "  TX ok: %u, TX fail: %u, RX: %u, last RX age: %ums",
+                (unsigned) this->tx_ok_.load(std::memory_order_relaxed),
+                (unsigned) this->tx_fail_.load(std::memory_order_relaxed),
+                (unsigned) this->rx_count_.load(std::memory_order_relaxed),
+                (unsigned) (last_rx == 0 ? 0 : now - last_rx));
+  ESP_LOGCONFIG(TAG, "  Images ok: %u drop(link/no-writer/prepare/encode/mbox): %u/%u/%u/%u/%u",
+                (unsigned) this->img_ok_.load(std::memory_order_relaxed),
+                (unsigned) this->img_drop_link_down_.load(std::memory_order_relaxed),
+                (unsigned) this->img_drop_no_writer_.load(std::memory_order_relaxed),
+                (unsigned) this->img_drop_prepare_.load(std::memory_order_relaxed),
+                (unsigned) this->img_drop_encode_.load(std::memory_order_relaxed),
+                (unsigned) this->img_drop_mailbox_overwrite_.load(std::memory_order_relaxed));
 }
 
 void XrceDdsComponent::drop_link_() {
   // Always runs: closes the socket (no-op when already closed) and paces
   // the next attempt, even when the link was already down (connect-time
-  // failures funnel through here too).
+  // failures funnel through here too). Worker-only.
   this->udp_.close();
-  this->next_attempt_ = App.get_loop_component_start_time() + this->keepalive_timeout_ms_;
+  this->next_attempt_ = this->now_ms_() + this->keepalive_timeout_ms_;
   if (this->link_ == LinkState::LINK_DOWN)
     return;
   this->link_ = LinkState::LINK_DOWN;
+  this->link_up_.store(false, std::memory_order_relaxed);
   this->participant_created_ = false;
   this->publisher_created_ = false;
   this->subscriber_created_ = false;
@@ -280,7 +347,7 @@ void XrceDdsComponent::drop_link_() {
 }
 
 bool XrceDdsComponent::try_connect_() {
-  const uint32_t now = App.get_loop_component_start_time();
+  const uint32_t now = this->now_ms_();
   if (this->transport_ == TransportType::TRANSPORT_UDP) {
     if (!this->udp_.open(this->agent_address_.c_str(), this->agent_port_)) {
       this->drop_link_();
@@ -294,7 +361,7 @@ bool XrceDdsComponent::try_connect_() {
     }
   }
   // Single session attempt: blocks up to one connection interval worst case
-  // (agent down), paced by keepalive_timeout so the main loop keeps moving.
+  // (agent down). Runs on the worker task, so the main loop keeps moving.
   if (!uxr_create_session_retries(&this->session_, 1)) {
     ESP_LOGW(TAG, "No agent at %s:%u; retrying", this->agent_address_.c_str(), this->agent_port_);
     this->drop_link_();
@@ -306,6 +373,7 @@ bool XrceDdsComponent::try_connect_() {
     return false;
   }
   this->link_ = LinkState::LINK_UP;
+  this->link_up_.store(true, std::memory_order_relaxed);
   this->last_rx_ = now;
   this->last_pump_ = now;
   this->last_confirm_ = now;
@@ -354,6 +422,28 @@ bool topic_fits(const std::string &topic) {
   return dds_topic_name(topic.c_str(), tmp, sizeof(tmp));
 }
 
+// Materialize borrowed option strings into a queue-safe copy (loop thread).
+QueueOpts make_queue_opts(const ros2::MiddlewareOptions *opts) {
+  QueueOpts q;
+  if (opts == nullptr)
+    return q;
+  q.reliable = opts->reliable;
+  q.qos_explicit = opts->qos_explicit;
+  q.use_b64 = opts->use_b64;
+  q.stamp_sec = opts->stamp_sec;
+  q.stamp_nsec = opts->stamp_nsec;
+  if (opts->frame_id != nullptr) {
+    strncpy(q.frame_id, opts->frame_id, sizeof(q.frame_id) - 1);
+    q.frame_id[sizeof(q.frame_id) - 1] = '\0';
+  }
+  return q;
+}
+
+void copy_topic_str(char *dst, const std::string &src) {
+  strncpy(dst, src.c_str(), XRCE_TOPIC_NAME_LEN - 1);
+  dst[XRCE_TOPIC_NAME_LEN - 1] = '\0';
+}
+
 }  // namespace
 
 XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_(const std::string &topic) {
@@ -364,6 +454,20 @@ XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_(const std::string 
 }
 
 XrceDdsComponent::WriterEntry *XrceDdsComponent::find_writer_(const std::string &topic) {
+  for (size_t i = 0; i < this->num_writers_; i++)
+    if (this->writers_[i].topic == topic)
+      return &this->writers_[i];
+  return nullptr;
+}
+
+XrceDdsComponent::ReaderEntry *XrceDdsComponent::find_reader_cstr_(const char *topic) {
+  for (size_t i = 0; i < this->num_readers_; i++)
+    if (this->readers_[i].topic == topic)
+      return &this->readers_[i];
+  return nullptr;
+}
+
+XrceDdsComponent::WriterEntry *XrceDdsComponent::find_writer_cstr_(const char *topic) {
   for (size_t i = 0; i < this->num_writers_; i++)
     if (this->writers_[i].topic == topic)
       return &this->writers_[i];
@@ -394,6 +498,10 @@ size_t XrceDdsComponent::count_topics_() {
 }
 
 bool XrceDdsComponent::topic_allowed_(const std::string &topic) {
+  return this->topic_allowed_cstr_(topic.c_str());
+}
+
+bool XrceDdsComponent::topic_allowed_cstr_(const char *topic) {
   for (size_t i = 0; i < this->num_readers_; i++)
     if (this->readers_[i].topic == topic)
       return true;
@@ -570,7 +678,9 @@ bool XrceDdsComponent::create_writer_(WriterEntry &entry) {
   return this->create_pending_entities_();
 }
 
-// --- Ros2Middleware ---------------------------------------------------------
+// --- Ros2Middleware (loop-safe enqueue wrappers) --------------------------------
+// These run on the loop()/camera thread: validate, memcpy into a queue item,
+// enqueue with zero timeout. Never touch session/stream/table state.
 
 bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *type,
                                  ros2::SampleCallback cb, const ros2::MiddlewareOptions *opts) {
@@ -580,27 +690,63 @@ bool XrceDdsComponent::subscribe(const std::string &topic, const ros2::TypeDef *
     ESP_LOGE(TAG, "Topic name too long: %s", topic.c_str());
     return false;
   }
-  if (ReaderEntry *e = this->find_reader_(topic)) {
-    e->cb = std::move(cb);
+  if (this->ctrl_queue_ == nullptr)
+    return false;
+  if (this->num_sub_staging_ >= XRCE_SUB_STAGING_MAX)
+    return false;
+  // Stage the callback loop-side; the worker moves it into readers_[] once.
+  const uint8_t slot = (uint8_t) this->num_sub_staging_++;
+  this->sub_staging_[slot] = std::move(cb);
+  CtrlItem c;
+  c.op = XRCE_CTRL_SUBSCRIBE;
+  copy_topic_str(c.topic, topic);
+  c.type = type;
+  c.opts.reliable = opts == nullptr || opts->reliable;
+  c.opts.qos_explicit = opts != nullptr && opts->qos_explicit;
+  c.slot = slot;
+  if (xQueueSend(this->ctrl_queue_, &c, 0) != pdTRUE)
+    return false;
+  return true;
+}
+
+bool XrceDdsComponent::subscribe_on_worker_(const char *topic, const ros2::TypeDef *type,
+                                            uint8_t slot, const QueueOpts &opts) {
+  if (type == nullptr || slot >= XRCE_SUB_STAGING_MAX)
+    return false;
+  if (ReaderEntry *e = this->find_reader_cstr_(topic)) {
+    e->cb = std::move(this->sub_staging_[slot]);
     e->type = type;
-    e->reliable = opts == nullptr || opts->reliable;
+    e->reliable = opts.reliable;
     return true;
   }
-  if (!this->topic_allowed_(topic)) {
+  if (!this->topic_allowed_cstr_(topic)) {
     return false;
   }
   if (this->num_readers_ >= XRCE_MAX_READERS || this->num_readers_ >= this->max_datareaders_) {
-    ESP_LOGE(TAG, "Too many readers for %s", topic.c_str());
+    ESP_LOGE(TAG, "Too many readers for %s", topic);
     return false;
   }
   ReaderEntry &e = this->readers_[this->num_readers_++];
   e.topic = topic;
   e.type = type;
-  e.cb = std::move(cb);
-  e.reliable = opts == nullptr || opts->reliable;
+  e.cb = std::move(this->sub_staging_[slot]);
+  e.reliable = opts.reliable;
   if (this->link_ == LinkState::LINK_UP)
     this->create_reader_(e);
   return true;
+}
+
+void XrceDdsComponent::snapshot_tables_() {
+  this->snap_readers_.store((uint32_t) this->num_readers_, std::memory_order_relaxed);
+  this->snap_writers_.store((uint32_t) this->num_writers_, std::memory_order_relaxed);
+  this->snap_topics_.store((uint32_t) this->count_topics_(), std::memory_order_relaxed);
+}
+
+void XrceDdsComponent::handle_ctrl_(const CtrlItem &c) {
+  if (c.op == XRCE_CTRL_SUBSCRIBE) {
+    this->subscribe_on_worker_(c.topic, c.type, c.slot, c.opts);
+    this->snapshot_tables_();
+  }
 }
 
 bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *type,
@@ -612,23 +758,51 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
     ESP_LOGE(TAG, "Topic name too long: %s", topic.c_str());
     return false;
   }
+  if (this->out_queue_ == nullptr)
+    return false;
+  if (len > sizeof(OutboundItem::data)) {
+    ESP_LOGW(TAG, "Sample too large for %s (%u bytes)", topic.c_str(), (unsigned) len);
+    this->tx_fail_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  OutboundItem o;
+  copy_topic_str(o.topic, topic);
+  o.type = type;
+  o.opts = make_queue_opts(opts);
+  o.len = (uint16_t) len;
+  memcpy(o.data, sample, len);
+  if (xQueueSend(this->out_queue_, &o, 0) != pdTRUE) {
+    // Freshest wins: evict the oldest queued sample for the new one.
+    OutboundItem drop;
+    xQueueReceive(this->out_queue_, &drop, 0);
+    xQueueSend(this->out_queue_, &o, 0);
+    this->tx_fail_.fetch_add(1, std::memory_order_relaxed);
+    ESP_LOGW(TAG, "Outbound queue full; dropped oldest for %s", topic.c_str());
+  }
+  return true;
+}
+
+bool XrceDdsComponent::publish_on_worker_(const char *topic, const ros2::TypeDef *type,
+                                          const void *sample, size_t len, const QueueOpts &opts) {
+  if (type == nullptr || sample == nullptr)
+    return false;
   if (this->link_ != LinkState::LINK_UP)
     return false;
-  WriterEntry *w = this->find_writer_(topic);
+  WriterEntry *w = this->find_writer_cstr_(topic);
   if (w == nullptr) {
-    if (!this->topic_allowed_(topic)) {
+    if (!this->topic_allowed_cstr_(topic)) {
       this->tx_fail_++;
       return false;
     }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
-      ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
+      ESP_LOGE(TAG, "Too many writers for %s", topic);
       this->tx_fail_++;
       return false;
     }
     WriterEntry &e = this->writers_[this->num_writers_++];
     e.topic = topic;
     e.type = type;
-    e.reliable = opts == nullptr || opts->reliable;
+    e.reliable = opts.reliable;
     w = &e;
   }
   if (!w->created && !this->create_writer_(*w)) {
@@ -637,7 +811,7 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
   }
   uint32_t size = this->codec_.size_of(type, sample, len);
   if (size == 0) {
-    ESP_LOGW(TAG, "Unencodable sample for %s", topic.c_str());
+    ESP_LOGW(TAG, "Unencodable sample for %s", topic);
     this->tx_fail_++;
     return false;
   }
@@ -659,12 +833,17 @@ bool XrceDdsComponent::publish(const std::string &topic, const ros2::TypeDef *ty
     return false;
   }
   if (!this->codec_.serialize(&ub, type, sample, len) || ub.error) {
-    ESP_LOGW(TAG, "XCDR encode failed for %s", topic.c_str());
+    ESP_LOGW(TAG, "XCDR encode failed for %s", topic);
     this->tx_fail_++;
     return false;
   }
   this->tx_ok_++;
   return true;
+}
+
+void XrceDdsComponent::handle_outbound_(const OutboundItem &o) {
+  this->publish_on_worker_(o.topic, o.type, o.data, o.len, o.opts);
+  this->snapshot_tables_();  // writer emplace happens lazily on first publish
 }
 
 bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jpeg, size_t len,
@@ -675,6 +854,35 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
     ESP_LOGE(TAG, "Topic name too long: %s", topic.c_str());
     return false;
   }
+  if (this->img_box_ == nullptr)
+    return false;
+  if (!this->link_up_.load(std::memory_order_relaxed)) {
+    this->img_drop_link_down_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  if (len > XRCE_IMG_MAILBOX_MAX) {
+    ESP_LOGW(TAG, "Image too large for %s (%u bytes)", topic.c_str(), (unsigned) len);
+    this->tx_fail_.fetch_add(1, std::memory_order_relaxed);
+    this->img_drop_prepare_.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  // 1-deep mailbox: the camera overwrites whatever the worker has not sent
+  // yet. Overwrites are counted worker-side via the sequence gap.
+  // (Staged in a member: a 48 kB item would overflow the loop task stack.)
+  ImageItem &img = this->img_stage_;
+  copy_topic_str(img.topic, topic);
+  img.opts = make_queue_opts(opts);
+  img.len = (uint32_t) len;
+  img.seq = ++this->img_seq_;
+  memcpy(img.jpeg, jpeg, len);
+  xQueueOverwrite(this->img_box_, &img);
+  return true;
+}
+
+bool XrceDdsComponent::publish_image_on_worker_(const char *topic, const uint8_t *jpeg, size_t len,
+                                                const QueueOpts &opts) {
+  if (jpeg == nullptr || len == 0)
+    return false;
   if (this->link_ != LinkState::LINK_UP) {
     this->img_drop_link_down_++;
     return false;
@@ -682,15 +890,15 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   const ros2::TypeDef *type = ros2::find_type("sensor_msgs/CompressedImage");
   if (type == nullptr)
     return false;
-  WriterEntry *w = this->find_writer_(topic);
+  WriterEntry *w = this->find_writer_cstr_(topic);
   if (w == nullptr) {
-    if (!this->topic_allowed_(topic)) {
+    if (!this->topic_allowed_cstr_(topic)) {
       this->tx_fail_++;
       this->img_drop_no_writer_++;
       return false;
     }
     if (this->num_writers_ >= XRCE_MAX_WRITERS || this->num_writers_ >= this->max_datawriters_) {
-      ESP_LOGE(TAG, "Too many writers for %s", topic.c_str());
+      ESP_LOGE(TAG, "Too many writers for %s", topic);
       this->tx_fail_++;
       this->img_drop_no_writer_++;
       return false;
@@ -712,15 +920,9 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   // window, which pumps the session without blocking, so frames of any size
   // stream in one call and abort fast on congestion (history exhaustion
   // -> ub.error).
-  int32_t sec = 0;
-  uint32_t nsec = 0;
-  const char *frame_id = "";
-  if (opts != nullptr) {
-    sec = opts->stamp_sec;
-    nsec = opts->stamp_nsec;
-    if (opts->frame_id != nullptr)
-      frame_id = opts->frame_id;
-  }
+  const int32_t sec = opts.stamp_sec;
+  const uint32_t nsec = opts.stamp_nsec;
+  const char *frame_id = opts.frame_id;
   uint32_t total = 8;  // stamp sec + nanosec
   total += (uint32_t) (ucdr_alignment(total, 4) + 4 + strlen(frame_id) + 1);
   total += (uint32_t) (ucdr_alignment(total, 4) + 4 + 5);  // "jpeg" + NUL
@@ -741,7 +943,7 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
                                              total, image_flush, this);
   }
   if (prepare_id == UXR_INVALID_REQUEST_ID) {
-    ESP_LOGW(TAG, "Image prepare congested for %s (%u bytes)", topic.c_str(), (unsigned) len);
+    ESP_LOGW(TAG, "Image prepare congested for %s (%u bytes)", topic, (unsigned) len);
     this->tx_fail_++;
     this->img_drop_prepare_++;
     return false;
@@ -757,7 +959,7 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   if (ser_dt > this->probe_ser_max_us_)
     this->probe_ser_max_us_ = ser_dt;
   if (!ser_ok) {
-    ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic.c_str(), (unsigned) len);
+    ESP_LOGW(TAG, "Image publish failed for %s (%u bytes)", topic, (unsigned) len);
     this->tx_fail_++;
     this->img_drop_encode_++;
     // Soft recovery: reset only the image stream so one poisoned frame does
@@ -775,8 +977,18 @@ bool XrceDdsComponent::publish_image(const std::string &topic, const uint8_t *jp
   this->img_ok_++;
   this->img_encode_fails_ = 0;
   this->probe_frames_++;
-  this->probe_last_frame_ms_ = App.get_loop_component_start_time();
+  this->probe_last_frame_ms_ = this->now_ms_();
   return true;
+}
+
+void XrceDdsComponent::handle_image_(const ImageItem &img) {
+  // Mailbox overwrite accounting: skipped sequence numbers are frames the
+  // camera replaced before the worker sent them (freshest wins by design).
+  if (this->img_mailbox_seen_ != 0 && img.seq > this->img_mailbox_seen_ + 1)
+    this->img_drop_mailbox_overwrite_ += (img.seq - this->img_mailbox_seen_ - 1);
+  this->img_mailbox_seen_ = img.seq;
+  this->publish_image_on_worker_(img.topic, img.jpeg, img.len, img.opts);
+  this->snapshot_tables_();  // writer emplace happens lazily on first frame
 }
 
 // --- Inbound dispatch -------------------------------------------------------
@@ -796,8 +1008,8 @@ void XrceDdsComponent::on_data_(uxrObjectId reader_id, ucdrBuffer *ub, uint16_t 
   ReaderEntry *e = this->find_reader_by_id_(reader_id);
   if (e == nullptr || e->type == nullptr)
     return;
-  this->last_rx_ = App.get_loop_component_start_time();
-  this->rx_count_++;
+  this->last_rx_.store(this->now_ms_(), std::memory_order_relaxed);
+  this->rx_count_.fetch_add(1, std::memory_order_relaxed);
   if (this->codec_.deserialize(ub, e->type, this->sample_buf_, sizeof(this->sample_buf_)))
     e->cb(this->sample_buf_, e->type->size);
 }
