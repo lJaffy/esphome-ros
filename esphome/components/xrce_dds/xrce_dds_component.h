@@ -166,7 +166,6 @@ class XrceDdsComponent : public Component, public ros2::Ros2Middleware {
     uxrObjectId requester_id{};
     bool created{false};
     bool pending{false};
-    uint16_t pending_seq{0};
     uint32_t deadline_ms{0};
     ros2::ServiceReplyCallback cb;
   };

@@ -897,7 +897,10 @@ namespace esphome
         if (ok && p.endpoint_req != UXR_INVALID_REQUEST_ID)
           ok = status[s++] == UXR_STATUS_OK;
         if (!ok)
+        {
+          ESP_LOGW(TAG, "Service client create rejected for %s", p.requester->service.c_str());
           continue;
+        }
         if (p.reader != nullptr)
         {
           p.reader->created = true;
@@ -975,13 +978,17 @@ namespace esphome
         return false;
       // uxr_buffer_request prepares its own stream internally; Trigger
       // requests are empty (0 bytes). len==0 needs no payload pointer.
+      // Return value is the XRCE request id (session counter), NOT the
+      // sample/sequence number the agent's reply echoes: replies carry
+      // agent-assigned sequence ids (Requester::write uses its own
+      // (raw_id << 16) + writer sequence), so any reply for this requester
+      // clears the single outstanding call regardless of numeric match.
       uint16_t seq =
           uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
       if (seq == UXR_INVALID_REQUEST_ID)
         return false;
-      ESP_LOGW(TAG, "Service %s call sent (seq %u)", e->service.c_str(), (unsigned)seq);
+      ESP_LOGW(TAG, "Service %s call sent (req %u)", e->service.c_str(), (unsigned)seq);
       e->pending = true;
-      e->pending_seq = seq;
       e->deadline_ms = this->now_ms_() + (timeout_ms != 0 ? timeout_ms : 5000);
       e->cb = std::move(this->svc_staging_[slot]);
       uxrDeliveryControl dc{};
@@ -991,17 +998,16 @@ namespace esphome
       return true;
     }
 
-    void XrceDdsComponent::sweep_service_timeouts_()
+  void XrceDdsComponent::sweep_service_timeouts_()
+  {
+    const uint32_t now = this->now_ms_();
+    for (size_t i = 0; i < this->num_requesters_; i++)
     {
-      const uint32_t now = this->now_ms_();
-      for (size_t i = 0; i < this->num_requesters_; i++)
-      {
-        RequesterEntry &e = this->requesters_[i];
-        if (!e.pending || now < e.deadline_ms)
-          continue;
-        ESP_LOGW(TAG, "Service %s call timed out (seq %u)", e.service.c_str(),
-                 (unsigned)e.pending_seq);
-        e.pending = false;
+      RequesterEntry &e = this->requesters_[i];
+      if (!e.pending || now < e.deadline_ms)
+        continue;
+      ESP_LOGW(TAG, "Service %s call timed out", e.service.c_str());
+      e.pending = false;
         auto cb = std::move(e.cb);
         if (cb)
           cb(false, true, nullptr, 0);
@@ -1463,15 +1469,10 @@ namespace esphome
           continue;
         if (!e.pending || e.type == nullptr)
           return;
-        // reply_id comes from the DATA payload's BaseObjectRequest, i.e. the
-        // sequence number of the reply path (matches pending_seq only when the
-        // agent echoes the request's sequence back here).
-        if (e.pending_seq != reply_id)
-        {
-          ESP_LOGW(TAG, "Service %s reply seq mismatch (got %u, want %u)", e.service.c_str(),
-                   (unsigned)reply_id, (unsigned)e.pending_seq);
-          return;
-        }
+        // Single outstanding call per requester: any reply addressed to
+        // this requester completes it. reply_id is agent-assigned (see
+        // call_service_on_worker_) and does not echo the XRCE request id.
+        (void)reply_id;
         matched = true;
         this->last_rx_.store(this->now_ms_(), std::memory_order_relaxed);
         this->rx_count_.fetch_add(1, std::memory_order_relaxed);
