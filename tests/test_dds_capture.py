@@ -111,14 +111,15 @@ def test_service_names_mirror_codec(dds):
         dds.dds_service_names("no-slash")
 
 
-def test_requester_xml_uses_rmw_element_form():
-    # rmw_microxrcedds build_service_xml() puts topic names in child
-    # elements; attribute form parses as empty QoS -> silent timeout.
+def test_requester_uses_bin_create():
+    # rmw_microxrcedds uses create_requester_bin (explicit topic/type
+    # strings), not XML: no FastDDS get_requester_qos_from_xml dialect to
+    # mismatch against. The XML builder must be gone, not just unused.
     src = (REPO / "esphome" / "components" / "xrce_dds"
            / "xrce_dds_component.cpp").read_text()
-    assert "<request_topic_name>%s</request_topic_name>" in src
-    assert "<reply_topic_name>%s</reply_topic_name>" in src
-    assert "request_topic_name=\\%s" not in src
+    assert "uxr_buffer_create_requester_bin" in src
+    assert "build_requester_xml" not in src
+    assert "uxr_buffer_create_requester_xml" not in src
 
 
 def test_trigger_server_reply_text():

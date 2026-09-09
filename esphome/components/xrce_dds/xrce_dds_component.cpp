@@ -568,20 +568,6 @@ namespace esphome
       // best_effort endpoints; reliable ones keep the bare form above so default
       // behavior is byte-identical. If the agent rejects this dialect the entity
       // creation fails loudly (never silently) — verify against your agent.
-      // rmw_microxrcedds build_service_xml() uses child elements, not
-      // attributes, for the topic names. Attribute form parses as an empty
-      // requester QoS (no topic match -> silent timeout), so mirror the rmw
-      // element form exactly.
-      void build_requester_xml(char *out, size_t cap, const char *service, const char *req_type,
-                               const char *rep_type, const char *req_topic, const char *rep_topic)
-      {
-        snprintf(out, cap,
-                 "<dds><requester profile_name=\"%s\" service_name=\"%s\" request_type=\"%s\" reply_type=\"%s\">"
-                 "<request_topic_name>%s</request_topic_name>"
-                 "<reply_topic_name>%s</reply_topic_name>"
-                 "</requester></dds>",
-                 service, service, req_type, rep_type, req_topic, rep_topic);
-      }
 
       void build_endpoint_qos_xml(char *out, size_t cap, const char *kind, const char *topic,
                                   const char *type, bool reliable)
@@ -799,10 +785,19 @@ namespace esphome
         Pending p;
         p.requester = &e;
         e.requester_id = uxr_object_id(this->next_requester_n_++, UXR_REQUESTER_ID);
-        build_requester_xml(xml, sizeof(xml), e.service.c_str(), req_type, rep_type, req_topic, rep_topic);
-        p.endpoint_req = uxr_buffer_create_requester_xml(&this->session_, this->out_stream_, e.requester_id,
-                                                         this->participant_id_, xml, UXR_REPLACE);
-        reqs[n++] = p.endpoint_req;
+      // rmw_microxrcedds uses create_requester_bin (not XML): the agent
+      // builds the FastDDS requester from explicit topic/type strings, so
+      // a FastDDS get_requester_qos_from_xml dialect mismatch cannot
+      // silently bind the wrong DDS topics. QoS mirrors rmw defaults:
+      // transient_local durability, reliable, keep-last.
+      uxrQoS_t qos{};
+      qos.durability = UXR_DURABILITY_TRANSIENT_LOCAL;
+      qos.reliability = UXR_RELIABILITY_RELIABLE;
+      qos.history = UXR_HISTORY_KEEP_LAST;
+      p.endpoint_req = uxr_buffer_create_requester_bin(
+          &this->session_, this->out_stream_, e.requester_id, this->participant_id_,
+          e.service.c_str(), req_type, rep_type, req_topic, rep_topic, qos, UXR_REPLACE);
+      reqs[n++] = p.endpoint_req;
         pending[num_pending++] = p;
       }
       for (size_t i = 0; i < this->num_readers_ && num_pending < pending.size(); i++)
@@ -984,7 +979,7 @@ namespace esphome
           uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
       if (seq == UXR_INVALID_REQUEST_ID)
         return false;
-      ESP_LOGW(TAG, "Service %s call sent (seq %u)", e->service, (unsigned)seq);
+      ESP_LOGW(TAG, "Service %s call sent (seq %u)", e->service.c_str(), (unsigned)seq);
       e->pending = true;
       e->pending_seq = seq;
       e->deadline_ms = this->now_ms_() + (timeout_ms != 0 ? timeout_ms : 5000);
