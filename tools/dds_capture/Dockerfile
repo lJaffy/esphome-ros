@@ -5,18 +5,14 @@ FROM microros/micro-ros-agent:jazzy
 
 ENV ROS_DOMAIN_ID=0
 
-# python3-pip for requirements.txt; ROS packages only if missing from the
-# base image. An unconditional reinstall risks version skew within the
-# jazzy stack (e.g. libstd_srvs built against a newer libfastcdr than the
-# one installed), which breaks `ros2 service call` with undefined-symbol
-# errors while the rclpy server itself still lists fine.
-RUN apt-get update && \
-    NEED=""; \
-    dpkg -s python3-pip >/dev/null 2>&1 || NEED="$NEED python3-pip"; \
-    dpkg -s ros-jazzy-rclpy >/dev/null 2>&1 || NEED="$NEED ros-jazzy-rclpy"; \
-    dpkg -s ros-jazzy-std-srvs >/dev/null 2>&1 || NEED="$NEED ros-jazzy-std-srvs"; \
-    if [ -n "$NEED" ]; then apt-get install -y --no-install-recommends $NEED; fi && \
-    rm -rf /var/lib/apt/lists/*
+# Only python3-pip is missing from the base image (rclpy + std_srvs
+# ship with it — verified via `dpkg -s`). No ROS packages are installed
+# here: reinstalling them on top of the prebuilt image caused FastDDS
+# version skew inside the jazzy stack (newer libstd_srvs against older
+# libfastcdr), breaking `ros2 service call` with undefined-symbol errors
+# while the rclpy server itself still listed fine.
+RUN apt-get update && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/capture
 COPY requirements.txt .

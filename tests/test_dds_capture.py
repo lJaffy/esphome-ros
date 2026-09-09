@@ -134,16 +134,16 @@ def test_compose_has_trigger_service():
     assert 'command: ["trigger"]' in text
 
 
-def test_dockerfile_no_unconditional_ros_reinstall():
-    # Regression: unconditional `apt-get install ros-jazzy-rclpy
-    # ros-jazzy-std-srvs` on top of the prebuilt image caused FastDDS
-    # version skew inside the jazzy stack (`ros2 service call` died with
-    # undefined-symbol while the rclpy server still listed fine).
+def test_dockerfile_no_ros_reinstall():
+    # Regression: installing ros-jazzy-rclpy/std-srvs on top of the
+    # prebuilt image caused FastDDS version skew inside the jazzy stack
+    # (`ros2 service call` died with undefined-symbol while the rclpy
+    # server still listed fine). The base image already ships both
+    # (verified via `dpkg -s`); only python3-pip may be added.
     text = (TOOLS / "Dockerfile").read_text()
-    assert "dpkg -s ros-jazzy-rclpy" in text
-    assert "dpkg -s ros-jazzy-std-srvs" in text
-    # No blanket reinstall line covering all three packages at once.
-    assert "python3-pip \\\n    ros-jazzy-rclpy" not in text
+    assert "ros-jazzy-rclpy" not in text
+    assert "ros-jazzy-std-srvs" not in text
+    assert "python3-pip" in text
 
 
 def test_dockerfile_trigger_typesupport_smoke():
