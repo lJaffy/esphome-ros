@@ -496,11 +496,17 @@ void build_endpoint_xml(char *out, size_t cap, const char *kind, const char *top
 // best_effort endpoints; reliable ones keep the bare form above so default
 // behavior is byte-identical. If the agent rejects this dialect the entity
 // creation fails loudly (never silently) — verify against your agent.
+// rmw_microxrcedds build_service_xml() uses child elements, not
+// attributes, for the topic names. Attribute form parses as an empty
+// requester QoS (no topic match -> silent timeout), so mirror the rmw
+// element form exactly.
 void build_requester_xml(char *out, size_t cap, const char *service, const char *req_type,
                            const char *rep_type, const char *req_topic, const char *rep_topic) {
   snprintf(out, cap,
-           "<dds><requester profile_name=\"%s\" service_name=\"%s\" request_type=\"%s\" reply_type=\"%s\" "
-           "request_topic_name=\"%s\" reply_topic_name=\"%s\"></requester></dds>",
+           "<dds><requester profile_name=\"%s\" service_name=\"%s\" request_type=\"%s\" reply_type=\"%s\">"
+           "<request_topic_name>%s</request_topic_name>"
+           "<reply_topic_name>%s</reply_topic_name>"
+           "</requester></dds>",
            service, service, req_type, rep_type, req_topic, rep_topic);
 }
 
@@ -854,11 +860,12 @@ bool XrceDdsComponent::call_service_on_worker_(const char *service, uint32_t tim
   if (!e->created)
     return false;
   // uxr_buffer_request prepares its own stream internally; Trigger
-  // requests are empty (0 bytes).
-  uint8_t dummy = 0;
-  uint16_t seq = uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, &dummy, 0);
+  // requests are empty (0 bytes). len==0 needs no payload pointer.
+  uint16_t seq =
+      uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
   if (seq == UXR_INVALID_REQUEST_ID)
     return false;
+  ESP_LOGD(TAG, "Service %s call sent (seq %u)", e.service, (unsigned) seq);
   e->pending = true;
   e->pending_seq = seq;
   e->deadline_ms = this->now_ms_() + (timeout_ms != 0 ? timeout_ms : 5000);
@@ -876,6 +883,8 @@ void XrceDdsComponent::sweep_service_timeouts_() {
     RequesterEntry &e = this->requesters_[i];
     if (!e.pending || now < e.deadline_ms)
       continue;
+    ESP_LOGW(TAG, "Service %s call timed out (seq %u)", e.service.c_str(),
+             (unsigned) e.pending_seq);
     e.pending = false;
     auto cb = std::move(e.cb);
     if (cb)
@@ -886,10 +895,13 @@ void XrceDdsComponent::sweep_service_timeouts_() {
 
 void XrceDdsComponent::handle_svc_(const SvcCtrlItem &c) {
   if (c.op == XRCE_SVC_CREATE_CLIENT) {
-    this->create_client_on_worker_(c.service, c.type, c.slot);
+    if (!this->create_client_on_worker_(c.service, c.type, c.slot))
+      ESP_LOGW(TAG, "Service client create failed for %s", c.service);
   } else if (c.op == XRCE_SVC_CALL) {
-    if (!this->call_service_on_worker_(c.service, c.timeout_ms, c.slot))
+    if (!this->call_service_on_worker_(c.service, c.timeout_ms, c.slot)) {
+      ESP_LOGW(TAG, "Service call rejected for %s (link down or busy)", c.service);
       this->svc_fail_.fetch_add(1, std::memory_order_relaxed);
+    }
   }
   this->snapshot_tables_();
 }
@@ -1274,24 +1286,36 @@ void XrceDdsComponent::reply_trampoline_(uxrSession *session, uxrObjectId object
 void XrceDdsComponent::on_reply_(uxrObjectId requester_id, uint16_t reply_id, ucdrBuffer *ub,
                                  uint16_t length) {
   (void) length;
+  bool matched = false;
   for (size_t i = 0; i < this->num_requesters_; i++) {
     RequesterEntry &e = this->requesters_[i];
     if (!e.created || e.requester_id.id != requester_id.id)
       continue;
     if (!e.pending || e.type == nullptr)
       return;
+    if (e.pending_seq != reply_id) {
+      ESP_LOGW(TAG, "Service %s reply seq mismatch (got %u, want %u)", e.service.c_str(),
+               (unsigned) reply_id, (unsigned) e.pending_seq);
+      return;
+    }
+    matched = true;
     this->last_rx_.store(this->now_ms_(), std::memory_order_relaxed);
     this->rx_count_.fetch_add(1, std::memory_order_relaxed);
+    ESP_LOGD(TAG, "Service %s reply (%u bytes)", e.service.c_str(), (unsigned) length);
     if (this->codec_.deserialize_reply(ub, e.type, this->svc_reply_buf_, sizeof(this->svc_reply_buf_))) {
       e.pending = false;
       auto cb = std::move(e.cb);
       if (cb)
         cb(true, false, this->svc_reply_buf_, e.type->reply_size);
       this->svc_ok_.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      ESP_LOGW(TAG, "Service %s reply decode failed (%u bytes)", e.service.c_str(),
+               (unsigned) length);
     }
-    (void) reply_id;
     return;
   }
+  if (!matched)
+    ESP_LOGW(TAG, "Reply for unknown requester id 0x%04x", (unsigned) requester_id.id);
 }
 
 void XrceDdsComponent::topic_trampoline_(uxrSession *session, uxrObjectId object_id,

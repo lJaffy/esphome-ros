@@ -1,0 +1,36 @@
+# Dev-exercise stack: agent (XRCE<->DDS bridge) + /toggle_led server
+# (Phase-3 Trigger spike) + optional recorder. Compose makes sense here
+# because the agent and the Trigger responder are separate processes that
+# must share DDS discovery inside one net namespace.
+#
+# Usage:
+#   docker compose -f tools/dds_capture/docker-compose.yml up --build
+#   docker compose -f tools/dds_capture/docker-compose.yml up trigger   # server only
+#
+# The board dials the agent over UDP :8888; the Trigger server answers
+# /toggle_led via DDS. ROS_DOMAIN_ID must match xrce_dds domain_id (0).
+
+name: dds-capture
+
+services:
+  agent:
+    build: .
+    image: dds-capture:latest
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: "0"
+      AGENT_PORT: "8888"
+    # Bare agent + recorder (default entrypoint, no args).
+    volumes:
+      - ./runs:/out
+
+  trigger:
+    build: .
+    image: dds-capture:latest
+    network_mode: host
+    environment:
+      ROS_DOMAIN_ID: "0"
+    # rclpy server for fixed /toggle_led (std_srvs/Trigger).
+    command: ["trigger"]
+    depends_on:
+      - agent

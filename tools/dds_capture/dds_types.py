@@ -50,10 +50,14 @@ ROS_TO_DDS_SERVICE = {
 
 
 def dds_service_names(ros_service):
-    """Mirror of dds_service_request_names(): '/x' -> ('rq/x', 'rr/x')."""
+    """Mirror of dds_service_request_names(): '/x' -> ('rq/xRequest', 'rr/xReply').
+
+    Suffixes come from rmw_microxrcedds generate_service_topics(); without
+    them the agent endpoints never match a ROS 2 server (silent timeout).
+    """
     if not ros_service or not ros_service.startswith("/"):
         raise ValueError("ROS service must start with '/': %r" % (ros_service,))
-    return "rq" + ros_service, "rr" + ros_service
+    return "rq" + ros_service + "Request", "rr" + ros_service + "Reply"
 
 
 # Topics the S3 publishes by default (override with --topic on the CLI).

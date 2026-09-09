@@ -205,10 +205,11 @@ bool dds_service_request_names(const char *ros_service, char *req_topic, size_t 
   size_t n = strlen(ros_service);
   if (n == 0 || n + 12 > req_cap || n + 12 > rep_cap)
     return false;
-  memcpy(req_topic, "rq", 2);
-  memcpy(req_topic + 2, ros_service, n + 1);
-  memcpy(rep_topic, "rr", 2);
-  memcpy(rep_topic + 2, ros_service, n + 1);
+  // Must match rmw_microxrcedds generate_service_topics(): "rq" + name +
+  // "Request" / "rr" + name + "Reply". Without the suffix the agent creates
+  // valid DDS endpoints that no ROS 2 server ever matches (silent timeout).
+  snprintf(req_topic, req_cap, "rq%sRequest", ros_service);
+  snprintf(rep_topic, rep_cap, "rr%sReply", ros_service);
   const char *req = "std_srvs::srv::dds_::Trigger_Request_";
   const char *rep = "std_srvs::srv::dds_::Trigger_Response_";
   if (strlen(req) + 1 > req_type_cap || strlen(rep) + 1 > rep_type_cap)

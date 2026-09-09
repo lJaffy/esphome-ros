@@ -1,0 +1,2 @@
+# Eclipse CycloneDDS Python (DDS participant, no ROS 2 needed).
+cyclonedds>=0.9
