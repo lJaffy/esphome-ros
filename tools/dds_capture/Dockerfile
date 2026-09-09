@@ -5,13 +5,18 @@ FROM microros/micro-ros-agent:jazzy
 
 ENV ROS_DOMAIN_ID=0
 
-# Python runtime for capture.py (ROS images ship python3; ensure pip)
-# plus the rclpy Trigger server (may already be in the base image).
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3-pip \
-    ros-jazzy-rclpy \
-    ros-jazzy-std-srvs \
-    && rm -rf /var/lib/apt/lists/*
+# python3-pip for requirements.txt; ROS packages only if missing from the
+# base image. An unconditional reinstall risks version skew within the
+# jazzy stack (e.g. libstd_srvs built against a newer libfastcdr than the
+# one installed), which breaks `ros2 service call` with undefined-symbol
+# errors while the rclpy server itself still lists fine.
+RUN apt-get update && \
+    NEED=""; \
+    dpkg -s python3-pip >/dev/null 2>&1 || NEED="$NEED python3-pip"; \
+    dpkg -s ros-jazzy-rclpy >/dev/null 2>&1 || NEED="$NEED ros-jazzy-rclpy"; \
+    dpkg -s ros-jazzy-std-srvs >/dev/null 2>&1 || NEED="$NEED ros-jazzy-std-srvs"; \
+    if [ -n "$NEED" ]; then apt-get install -y --no-install-recommends $NEED; fi && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /opt/capture
 COPY requirements.txt .
@@ -38,9 +43,22 @@ RUN AGENT_EXE=$(find /uros_ws/install -path "*lib/micro_ros_agent/micro_ros_agen
 # resolve without sourcing a shell first).
 RUN for d in /uros_ws/install/*/lib /opt/ros/jazzy/lib; do echo "$d"; done \
       > /etc/ld.so.conf.d/micro-ros.conf && ldconfig
+# FastDDS skew guard: libstd_srvs' fastrtps typesupport must actually load
+# against the installed libfastcdr. A version skew inside the jazzy stack
+# (newer std_srvs against older fastcdr, or vice versa) surfaces only at
+# runtime as `undefined symbol: _ZN8eprosima7fastcdr3Cdr9serializeERKh` —
+# while `service list` still works. Creating a Trigger client dlopens that
+# typesupport, so this fails the build loudly instead of the board timing
+# out with no reply at HIL time. `set +u`: the ROS setup scripts reference
+# possibly-unset vars (AMENT_TRACE_SETUP_FILES).
 # NOTE: bare --help exits 1 by design (it demands a transport), so assert
-# on output: proves the loader resolves all libs, which is what we need.
+# on output: proves the loader resolves all agent libs, which is what we need.
 RUN micro-ros-agent --help 2>&1 | grep -q "udp4"
+RUN set +u; . /opt/ros/jazzy/setup.sh; set -u; python3 -c \
+    "import rclpy; rclpy.init(); \
+from rclpy.node import Node; from std_srvs.srv import Trigger; \
+n = Node('build_smoke'); c = n.create_client(Trigger, '/build_smoke'); \
+n.destroy_node(); rclpy.shutdown(); print('Trigger typesupport loads OK')"
 
 # Replaces the base image's entrypoint (which execs the agent): bare
 # `docker run` starts the agent AND records to $OUT_DIR. Pass an explicit

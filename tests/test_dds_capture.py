@@ -134,6 +134,25 @@ def test_compose_has_trigger_service():
     assert 'command: ["trigger"]' in text
 
 
+def test_dockerfile_no_unconditional_ros_reinstall():
+    # Regression: unconditional `apt-get install ros-jazzy-rclpy
+    # ros-jazzy-std-srvs` on top of the prebuilt image caused FastDDS
+    # version skew inside the jazzy stack (`ros2 service call` died with
+    # undefined-symbol while the rclpy server still listed fine).
+    text = (TOOLS / "Dockerfile").read_text()
+    assert "dpkg -s ros-jazzy-rclpy" in text
+    assert "dpkg -s ros-jazzy-std-srvs" in text
+    # No blanket reinstall line covering all three packages at once.
+    assert "python3-pip \\\n    ros-jazzy-rclpy" not in text
+
+
+def test_dockerfile_trigger_typesupport_smoke():
+    # The skew above is invisible until a Trigger client dlopens the
+    # fastrtps typesupport, so the build must exercise exactly that.
+    text = (TOOLS / "Dockerfile").read_text()
+    assert "create_client(Trigger" in text
+
+
 def test_parse_topic_arg_defaults(cap):
     assert cap.parse_topic_arg("/camera/image/compressed") == \
         ("/camera/image/compressed", "CompressedImage")
