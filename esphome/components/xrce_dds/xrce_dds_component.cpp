@@ -865,7 +865,7 @@ bool XrceDdsComponent::call_service_on_worker_(const char *service, uint32_t tim
       uxr_buffer_request(&this->session_, this->out_stream_, e->requester_id, nullptr, 0);
   if (seq == UXR_INVALID_REQUEST_ID)
     return false;
-  ESP_LOGD(TAG, "Service %s call sent (seq %u)", e.service, (unsigned) seq);
+  ESP_LOGW(TAG, "Service %s call sent (seq %u)", e.service, (unsigned) seq);
   e->pending = true;
   e->pending_seq = seq;
   e->deadline_ms = this->now_ms_() + (timeout_ms != 0 ? timeout_ms : 5000);
@@ -1289,10 +1289,17 @@ void XrceDdsComponent::on_reply_(uxrObjectId requester_id, uint16_t reply_id, uc
   bool matched = false;
   for (size_t i = 0; i < this->num_requesters_; i++) {
     RequesterEntry &e = this->requesters_[i];
-    if (!e.created || e.requester_id.id != requester_id.id)
+    // Match the full 2-byte object id: num_requesters_ counts forward from
+    // next_requester_n_ (0x31) and a session re-create after drop_link_
+    // reuses ids, so the low byte alone aliases across entries.
+    if (!e.created || e.requester_id.id != requester_id.id ||
+        e.requester_id.type != requester_id.type)
       continue;
     if (!e.pending || e.type == nullptr)
       return;
+    // reply_id comes from the DATA payload's BaseObjectRequest, i.e. the
+    // sequence number of the reply path (matches pending_seq only when the
+    // agent echoes the request's sequence back here).
     if (e.pending_seq != reply_id) {
       ESP_LOGW(TAG, "Service %s reply seq mismatch (got %u, want %u)", e.service.c_str(),
                (unsigned) reply_id, (unsigned) e.pending_seq);
@@ -1301,7 +1308,8 @@ void XrceDdsComponent::on_reply_(uxrObjectId requester_id, uint16_t reply_id, uc
     matched = true;
     this->last_rx_.store(this->now_ms_(), std::memory_order_relaxed);
     this->rx_count_.fetch_add(1, std::memory_order_relaxed);
-    ESP_LOGD(TAG, "Service %s reply (%u bytes)", e.service.c_str(), (unsigned) length);
+    ESP_LOGW(TAG, "Service %s reply arrived (%u bytes)", e.service.c_str(), (unsigned) length);
+    if (this->codec_.deserialize_reply(ub, e.type, this->svc_reply_buf_, sizeof(this->svc_reply_buf_))) {
     if (this->codec_.deserialize_reply(ub, e.type, this->svc_reply_buf_, sizeof(this->svc_reply_buf_))) {
       e.pending = false;
       auto cb = std::move(e.cb);
